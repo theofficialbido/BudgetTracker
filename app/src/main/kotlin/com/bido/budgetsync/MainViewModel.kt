@@ -47,6 +47,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val host = _host.asStateFlow()
     private val _token = MutableStateFlow(prefs.token)
     val token = _token.asStateFlow()
+    private val _autoDiscover = MutableStateFlow(prefs.autoDiscover)
+    val autoDiscover = _autoDiscover.asStateFlow()
     private val _smsEnabled = MutableStateFlow(prefs.smsEnabled)
     val smsEnabled = _smsEnabled.asStateFlow()
     private val _senders = MutableStateFlow(prefs.senders)
@@ -130,6 +132,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun saveConnection(host: String, token: String) {
         prefs.host = host; prefs.token = token
         _host.value = prefs.host; _token.value = prefs.token
+        sync()
+    }
+
+    fun setAutoDiscover(on: Boolean) {
+        prefs.autoDiscover = on
+        _autoDiscover.value = on
         sync()
     }
 

@@ -45,6 +45,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val savedHost by vm.host.collectAsState()
     val savedToken by vm.token.collectAsState()
+    val autoDiscover by vm.autoDiscover.collectAsState()
     val smsEnabled by vm.smsEnabled.collectAsState()
     val senders by vm.senders.collectAsState()
     val found by vm.foundSenders.collectAsState()
@@ -69,8 +70,19 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Laptop", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Find the laptop automatically")
+                    Text(
+                        "Looks for the helper on whatever Wi-Fi you're on, so a new network or IP address doesn't stop syncing. Works when phone and laptop share a network that allows it.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = autoDiscover, onCheckedChange = { vm.setAutoDiscover(it) })
+            }
             OutlinedTextField(
-                value = host, onValueChange = { host = it }, label = { Text("Address (name or IP, with port)") },
+                value = host, onValueChange = { host = it },
+                label = { Text(if (autoDiscover) "Backup address (name or IP, with port)" else "Address (name or IP, with port)") },
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(

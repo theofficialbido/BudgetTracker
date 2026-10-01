@@ -8,6 +8,8 @@ kotlin { jvmToolchain(17) }
 dependencies {
     implementation(libs.poi.ooxml)
     implementation(libs.jackson)
+    implementation(libs.jmdns)
+    implementation(libs.slf4j.nop)
     testImplementation(libs.kotlin.test)
 }
 
