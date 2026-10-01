@@ -42,6 +42,7 @@ fun main(args: Array<String>) {
         }
     }
     server.start()
+    if (cfg.bind == null) MdnsAdvertiser(cfg.port).start()   // a --bind test instance stays invisible on the network
 
     println("Budget sync helper running on port ${cfg.port}")
     println("Workbook : ${cfg.workbook}")

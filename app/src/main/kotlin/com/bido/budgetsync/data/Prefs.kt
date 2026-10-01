@@ -10,6 +10,16 @@ class Prefs(context: Context) {
         get() = sp.getString("host", DEFAULT_HOST) ?: DEFAULT_HOST
         set(v) = sp.edit().putString("host", v.trim()).apply()
 
+    /** Look for the laptop on the current network instead of relying on one saved address. */
+    var autoDiscover: Boolean
+        get() = sp.getBoolean("autoDiscover", true)
+        set(v) = sp.edit().putBoolean("autoDiscover", v).apply()
+
+    /** The address that last worked, tried first next time. */
+    var lastHost: String
+        get() = sp.getString("lastHost", "") ?: ""
+        set(v) = sp.edit().putString("lastHost", v).apply()
+
     var token: String
         get() = sp.getString("token", "") ?: ""
         set(v) = sp.edit().putString("token", v.trim()).apply()

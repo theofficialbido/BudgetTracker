@@ -71,7 +71,7 @@ class SyncException(val kind: Kind, message: String) : Exception(message) {
 }
 
 /** Plain HTTP to the laptop helper on the home network. */
-class SyncClient(host: String, token: String) {
+class SyncClient(host: String, token: String, private val connectMs: Int = 4000) {
     private val base = "http://" + host.trim().removePrefix("http://").trimEnd('/')
     private val token = token.uppercase().filter { it.isLetterOrDigit() }
 
@@ -97,7 +97,7 @@ class SyncClient(host: String, token: String) {
         }
         try {
             conn.requestMethod = method
-            conn.connectTimeout = 4000
+            conn.connectTimeout = connectMs
             conn.readTimeout = 15000
             conn.setRequestProperty("X-Token", token)
             if (body != null) {
@@ -129,6 +129,30 @@ data class SyncOutcome(val ok: Boolean, val message: String, val retry: Boolean)
 object Syncer {
     private val mutex = Mutex()
 
+    /**
+     * Finds an address that answers: the one that worked last time, then whatever the laptop announces on this network,
+     * then the manual address from Settings. Only "no answer" moves on to the next candidate; a real reply
+     * (wrong token, busy file) is reported as is. Returns the client, its address and the state it fetched.
+     */
+    private suspend fun connect(context: Context, prefs: Prefs): Triple<SyncClient, String, String>? {
+        val tried = HashSet<String>()
+        suspend fun attempt(address: String?): Triple<SyncClient, String, String>? {
+            val a = address?.trim().orEmpty()
+            if (a.isEmpty() || !tried.add(a)) return null
+            return try {
+                val client = SyncClient(a, prefs.token, connectMs = 2500)
+                Triple(client, a, client.fetchState())
+            } catch (e: SyncException) {
+                if (e.kind == SyncException.Kind.UNREACHABLE) null else throw e
+            }
+        }
+        if (prefs.autoDiscover) {
+            attempt(prefs.lastHost)?.let { return it }
+            attempt(Discovery.find(context))?.let { return it }
+        }
+        return attempt(prefs.host)
+    }
+
     suspend fun run(context: Context): SyncOutcome = mutex.withLock {
         withContext(Dispatchers.IO) {
             val prefs = Prefs(context)
@@ -136,13 +160,19 @@ object Syncer {
                 if (prefs.token.isBlank() || prefs.host.isBlank()) {
                     SyncOutcome(false, "Not paired yet: open Settings and enter the laptop token", false)
                 } else {
-                    val client = SyncClient(prefs.host, prefs.token)
+                    val (client, address, firstState) = connect(context, prefs)
+                        ?: throw SyncException(SyncException.Kind.UNREACHABLE, "Laptop not reachable on this network")
                     val dao = AppDatabase.get(context).expenseDao()
                     val queued = dao.unsynced()
-                    if (queued.isNotEmpty()) dao.markSynced(client.push(queued).toList())
-                    prefs.cachedState = client.fetchState()
+                    var state = firstState
+                    if (queued.isNotEmpty()) {
+                        dao.markSynced(client.push(queued).toList())
+                        state = client.fetchState()
+                    }
+                    prefs.cachedState = state
+                    prefs.lastHost = address
                     val left = dao.unsynced().size
-                    SyncOutcome(true, if (left == 0) "Synced" else "$left still waiting to sync", left > 0)
+                    SyncOutcome(true, if (left == 0) "Synced via $address" else "$left still waiting to sync", left > 0)
                 }
             } catch (e: SyncException) {
                 SyncOutcome(false, e.message ?: "Sync failed", e.kind == SyncException.Kind.UNREACHABLE || e.kind == SyncException.Kind.BUSY)

@@ -12,6 +12,8 @@ junit = "4.13.2"
 [libraries]
 poi-ooxml = { module = "org.apache.poi:poi-ooxml", version.ref = "poi" }
 jackson = { module = "com.fasterxml.jackson.core:jackson-databind", version = "2.17.2" }
+jmdns = { module = "org.jmdns:jmdns", version = "3.5.9" }
+slf4j-nop = { module = "org.slf4j:slf4j-nop", version = "1.7.36" }
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
