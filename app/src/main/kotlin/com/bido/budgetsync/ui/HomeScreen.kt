@@ -8,7 +8,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -59,32 +58,31 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.bido.budgetsync.MainViewModel
+import com.bido.budgetsync.data.CategorySummary
+import com.bido.budgetsync.data.Entry
 import com.bido.budgetsync.data.Expense
-import com.bido.budgetsync.data.ServerState
-import com.bido.budgetsync.data.TrackerLine
+import com.bido.budgetsync.data.MonthSummary
 import java.text.DateFormat
+import java.time.LocalDate
 import java.util.Date
-
-/** One line in the recent list: a row already in Budget.xlsx, or a phone entry still waiting to sync. */
-private data class Entry(
-    val key: String,
-    val date: String,
-    val category: String,
-    val description: String,
-    val amount: Double,
-    val waiting: Expense?,
-) {
-    val isIncome get() = category == MainViewModel.INCOME
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(vm: MainViewModel, onAdd: (income: Boolean) -> Unit, onReview: () -> Unit, onSettings: () -> Unit) {
+fun HomeScreen(
+    vm: MainViewModel,
+    onAdd: (income: Boolean) -> Unit,
+    onCategory: (String) -> Unit,
+    onReview: () -> Unit,
+    onSettings: () -> Unit,
+) {
     val state by vm.state.collectAsState()
-    val expenses by vm.expenses.collectAsState()
+    val summary by vm.summary.collectAsState()
+    val allEntries by vm.entries.collectAsState()
+    val categories by vm.categories.collectAsState()
     val pending by vm.pending.collectAsState()
     val status by vm.status.collectAsState()
     val syncing by vm.syncing.collectAsState()
@@ -93,16 +91,19 @@ fun HomeScreen(vm: MainViewModel, onAdd: (income: Boolean) -> Unit, onReview: ()
     var filter by rememberSaveable { mutableStateOf<String?>(null) }
     var fabOpen by rememberSaveable { mutableStateOf(false) }
     var toDelete by remember { mutableStateOf<Expense?>(null) }
+    var addingCategory by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
 
-    val waiting = expenses.filter { !it.synced }
-    val fromWorkbook = (state?.log?.map { Entry("r-${it.row}", it.date ?: "", it.category, it.description, it.amount ?: 0.0, null) } ?: emptyList()) +
-        (state?.incomeLog?.map { Entry("i-${it.row}", it.date ?: "", MainViewModel.INCOME, it.source, it.amount ?: 0.0, null) } ?: emptyList())
-    // newest first: by date, then workbook row
-    val entries = waiting.map { Entry("w-${it.id}", it.date, it.category, it.description, it.amount, it) } +
-        fromWorkbook.sortedWith(compareByDescending<Entry> { it.date }.thenByDescending { it.key.drop(2).toIntOrNull() ?: 0 }).take(60)
-    val shown = entries.filter { filter == null || it.category == filter }.take(40)
+    val waiting = allEntries.count { it.waiting }
+    // Waiting entries first, then newest by date.
+    val entries = allEntries
+        .sortedWith(
+            compareByDescending<Entry> { it.waiting }
+                .thenByDescending { it.date ?: LocalDate.MIN }
+                .thenByDescending { it.local?.createdAt ?: (it.key.drop(2).toLongOrNull() ?: 0L) },
+        )
+    val shown = entries.filter { filter == null || it.category.equals(filter, ignoreCase = true) }.take(40)
 
     Scaffold(
         topBar = {
@@ -141,7 +142,7 @@ fun HomeScreen(vm: MainViewModel, onAdd: (income: Boolean) -> Unit, onReview: ()
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 120.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                item(key = "summary") { SummaryCard(state) }
+                item(key = "summary") { SummaryCard(summary, neverSynced = state == null) }
 
                 if (pending.isNotEmpty()) {
                     item(key = "pending") {
@@ -157,29 +158,26 @@ fun HomeScreen(vm: MainViewModel, onAdd: (income: Boolean) -> Unit, onReview: ()
                     }
                 }
 
-                item(key = "sync") { SyncRow(waiting.size, status, lastSync, syncing) { vm.sync() } }
+                item(key = "sync") { SyncRow(waiting, status, lastSync, syncing) { vm.sync() } }
 
-                state?.let { s ->
-                    item(key = "cat-title") {
-                        Text("Categories", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp))
+                item(key = "cat-title") {
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Categories", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { addingCategory = true }) { Text("Add category") }
                     }
-                    items(s.tracker, key = { "cat-${it.category}" }) { t ->
-                        CategoryCard(t, selected = filter == t.category) { filter = if (filter == t.category) null else t.category }
-                    }
+                }
+                items(summary.categories, key = { "cat-${it.name}" }) { t ->
+                    CategoryCard(t) { onCategory(t.name) }
                 }
 
                 item(key = "recent-title") {
                     Text("Recent", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp))
                 }
                 item(key = "filters") {
-                    val options = listOf<String?>(null, MainViewModel.INCOME) + (state?.categories ?: vm.defaultCategories)
+                    val options = listOf<String?>(null, MainViewModel.INCOME) + categories
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(options) { o ->
-                            FilterChip(
-                                selected = filter == o,
-                                onClick = { filter = o },
-                                label = { Text(o ?: "All") },
-                            )
+                            FilterChip(selected = filter == o, onClick = { filter = o }, label = { Text(o ?: "All") })
                         }
                     }
                 }
@@ -194,7 +192,7 @@ fun HomeScreen(vm: MainViewModel, onAdd: (income: Boolean) -> Unit, onReview: ()
                 }
                 var lastLabel = ""
                 shown.forEach { e ->
-                    val label = dateLabel(e.date)
+                    val label = dateLabel(e.date?.toString() ?: "")
                     if (label != lastLabel) {
                         lastLabel = label
                         item(key = "h-$label-${e.key}") {
@@ -202,7 +200,7 @@ fun HomeScreen(vm: MainViewModel, onAdd: (income: Boolean) -> Unit, onReview: ()
                         }
                     }
                     item(key = e.key) {
-                        EntryRow(e, Modifier.animateItem()) { e.waiting?.let { toDelete = it } }
+                        EntryRow(e, Modifier.animateItem()) { e.local?.takeIf { !it.synced }?.let { toDelete = it } }
                     }
                 }
             }
@@ -218,49 +216,50 @@ fun HomeScreen(vm: MainViewModel, onAdd: (income: Boolean) -> Unit, onReview: ()
             dismissButton = { TextButton(onClick = { toDelete = null }) { Text("Keep") } },
         )
     }
+    if (addingCategory) {
+        AddCategoryDialog(onAdd = { name, planned -> vm.addCategory(name, planned) }, onDismiss = { addingCategory = false })
+    }
 }
 
 @Composable
-private fun SummaryCard(state: ServerState?) {
+private fun SummaryCard(summary: MonthSummary, neverSynced: Boolean) {
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(Modifier.padding(20.dp)) {
-            if (state == null) {
-                Text("Nothing from the laptop yet", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Open Settings, enter the pairing token, and keep the laptop helper running. You can still add expenses; they'll sync later.",
-                    style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp),
-                )
-                return@Column
-            }
             Text("Left after actual spending", style = MaterialTheme.typography.labelLarge)
-            val animated by animateFloatAsState(state.leftAfterActual.toFloat(), tween(700), label = "left")
+            val animated by animateFloatAsState(summary.left.toFloat(), tween(700), label = "left")
             Text(
                 money(animated.toDouble()) + " EGP",
                 style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold,
-                color = if (state.leftAfterActual < 0) statusColor("OVER") else MaterialTheme.colorScheme.onPrimaryContainer,
+                color = if (summary.left < 0) statusColor("OVER") else MaterialTheme.colorScheme.onPrimaryContainer,
             )
-            Text("Month ${state.month}", style = MaterialTheme.typography.bodySmall)
+            Text(monthLabel(summary.month), style = MaterialTheme.typography.bodySmall)
 
-            val planned = state.total.planned
-            val spentFrac = if (planned <= 0) (if (state.total.actual > 0) 1f else 0f) else (state.total.actual / planned).toFloat().coerceIn(0f, 1f)
+            val planned = summary.total.planned
+            val spentFrac = if (planned <= 0) (if (summary.total.actual > 0) 1f else 0f) else (summary.total.actual / planned).toFloat().coerceIn(0f, 1f)
             val animFrac by animateFloatAsState(spentFrac, tween(700), label = "spent")
             LinearProgressIndicator(
                 progress = { animFrac },
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(10.dp).clip(RoundedCornerShape(5.dp)),
-                color = statusColor(state.total.status),
+                color = statusColor(summary.total.status),
                 trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
             )
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Stat("Spent", money(state.total.actual))
+                Stat("Spent", money(summary.total.actual))
                 Stat("Planned", money(planned))
-                Stat("Received", money(state.incomeReceived), incomeColor())
+                Stat("Received", money(summary.incomeReceived), incomeColor())
+            }
+            if (neverSynced) {
+                Text(
+                    "Plans and alert levels come from the laptop. Sync once and they're remembered; totals work offline after that.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 12.dp),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun Stat(label: String, value: String, color: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified) {
+private fun Stat(label: String, value: String, color: Color = Color.Unspecified) {
     Column {
         Text(label, style = MaterialTheme.typography.labelSmall)
         Text(value, fontWeight = FontWeight.Bold, color = color)
@@ -283,7 +282,7 @@ private fun SyncRow(waiting: Int, status: String, lastSync: Long, syncing: Boole
             Text(
                 when {
                     syncing -> "Syncing…"
-                    waiting > 0 -> "$waiting waiting to sync. ${status}"
+                    waiting > 0 -> "$waiting waiting to sync. $status"
                     else -> status.ifBlank { "Not synced yet" }
                 },
                 style = MaterialTheme.typography.bodyMedium,
@@ -300,20 +299,17 @@ private fun SyncRow(waiting: Int, status: String, lastSync: Long, syncing: Boole
 }
 
 @Composable
-private fun CategoryCard(t: TrackerLine, selected: Boolean, onClick: () -> Unit) {
+private fun CategoryCard(t: CategorySummary, onClick: () -> Unit) {
     val color = statusColor(t.status)
     val frac = if (t.planned <= 0) (if (t.actual > 0) 1f else 0f) else (t.actual / t.planned).toFloat().coerceIn(0f, 1f)
     val anim by animateFloatAsState(frac, tween(700), label = "cat")
-    Card(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).animateContentSize(),
-        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-    ) {
+    Card(Modifier.fillMaxWidth().clickable(onClick = onClick).animateContentSize()) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconBadge(t.category)
+                IconBadge(t.name)
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(t.category, fontWeight = FontWeight.Medium)
+                    Text(t.name, fontWeight = FontWeight.Medium)
                     Text(
                         "${money(t.actual)} of ${money(t.planned)} EGP",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -331,7 +327,7 @@ private fun CategoryCard(t: TrackerLine, selected: Boolean, onClick: () -> Unit)
 }
 
 @Composable
-private fun IconBadge(category: String) {
+fun IconBadge(category: String) {
     Box(
         Modifier.size(40.dp).clip(CircleShape).background(accentFor(category).copy(alpha = 0.15f)),
         contentAlignment = Alignment.Center,
@@ -340,9 +336,10 @@ private fun IconBadge(category: String) {
 
 @Composable
 private fun EntryRow(e: Entry, modifier: Modifier, onWaitingClick: () -> Unit) {
+    val canDelete = e.local?.synced == false
     Row(
         modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-            .then(if (e.waiting != null) Modifier.clickable(onClick = onWaitingClick) else Modifier)
+            .then(if (canDelete) Modifier.clickable(onClick = onWaitingClick) else Modifier)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -351,9 +348,9 @@ private fun EntryRow(e: Entry, modifier: Modifier, onWaitingClick: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(e.description.ifBlank { e.category }, maxLines = 1)
             Text(
-                if (e.waiting != null) "${e.category} · waiting to sync (tap to delete)" else e.category,
+                if (e.waiting) "${e.category} · waiting to sync (tap to delete)" else e.category,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (e.waiting != null) statusColor("WATCH") else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (e.waiting) statusColor("WATCH") else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Text(

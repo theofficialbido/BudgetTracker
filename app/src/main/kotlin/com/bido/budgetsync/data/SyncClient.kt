@@ -28,6 +28,11 @@ data class ServerState(
     val incomeReceived: Double = 0.0,
     val plannedIncome: Double = 0.0,
     val incomeLog: List<IncomeLine> = emptyList(),
+    /** Categories added from the phone (kept on the laptop's "More categories" sheet), with their plans. */
+    val extras: List<TrackerLine> = emptyList(),
+    /** Alert levels from the Plan sheet, so the phone can work out OK / WATCH / OVER without the laptop. */
+    val watchAt: Double = 0.8,
+    val overAt: Double = 1.0,
 ) {
     companion object {
         fun fromJson(text: String): ServerState {
@@ -56,11 +61,13 @@ data class ServerState(
                     )
                 }
             }
+            val extras = (o.optJSONArray("extras") ?: JSONArray()).let { a -> (0 until a.length()).map { line(a.getJSONObject(it)) } }
             val tracker = o.getJSONArray("tracker").let { a -> (0 until a.length()).map { line(a.getJSONObject(it)) } }
             return ServerState(
                 o.getString("month"), cats, log, tracker, line(o.getJSONObject("total")),
                 o.getDouble("income"), o.getDouble("leftAfterActual"), o.optDouble("incomeReceived", 0.0),
-                o.optDouble("plannedIncome", 0.0), incomeLog,
+                o.optDouble("plannedIncome", 0.0), incomeLog, extras,
+                o.optDouble("watchAt", 0.8), o.optDouble("overAt", 1.0),
             )
         }
     }
@@ -87,6 +94,15 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
         }.toString()
         val res = JSONObject(request("POST", "/expenses", body)).getJSONArray("results")
         return (0 until res.length()).map { res.getJSONObject(it).getString("id") }.toSet()
+    }
+
+    /** Sends categories created on the phone. Returns the names the laptop now has (added, or already there). */
+    fun pushCategories(items: List<CustomCategory>): Set<String> {
+        val body = JSONArray().apply {
+            items.forEach { put(JSONObject().put("name", it.name).put("planned", it.planned)) }
+        }.toString()
+        val res = JSONObject(request("POST", "/categories", body)).getJSONArray("results")
+        return (0 until res.length()).map { res.getJSONObject(it).getString("name") }.toSet()
     }
 
     private fun request(method: String, path: String, body: String?): String {
@@ -162,14 +178,24 @@ object Syncer {
                 } else {
                     val (client, address, firstState) = connect(context, prefs)
                         ?: throw SyncException(SyncException.Kind.UNREACHABLE, "Laptop not reachable on this network")
-                    val dao = AppDatabase.get(context).expenseDao()
-                    val queued = dao.unsynced()
+                    val db = AppDatabase.get(context)
+                    val dao = db.expenseDao()
                     var state = firstState
+                    var changed = false
+                    // New categories first, so entries filed under them are recognised by the laptop.
+                    val newCategories = db.customCategoryDao().unsynced()
+                    if (newCategories.isNotEmpty()) {
+                        db.customCategoryDao().markSynced(client.pushCategories(newCategories).toList())
+                        changed = true
+                    }
+                    val queued = dao.unsynced()
                     if (queued.isNotEmpty()) {
                         dao.markSynced(client.push(queued).toList())
-                        state = client.fetchState()
+                        changed = true
                     }
+                    if (changed) state = client.fetchState()
                     prefs.cachedState = state
+                    dao.markInCache()   // the fresh state contains everything synced so far
                     prefs.lastHost = address
                     val left = dao.unsynced().size
                     SyncOutcome(true, if (left == 0) "Synced via $address" else "$left still waiting to sync", left > 0)

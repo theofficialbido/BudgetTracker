@@ -4,7 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bido.budgetsync.data.AppDatabase
+import com.bido.budgetsync.data.Calc
+import com.bido.budgetsync.data.CustomCategory
+import com.bido.budgetsync.data.Entry
 import com.bido.budgetsync.data.Expense
+import com.bido.budgetsync.data.MonthSummary
 import com.bido.budgetsync.data.PendingSms
 import com.bido.budgetsync.data.Prefs
 import com.bido.budgetsync.data.ServerState
@@ -18,11 +22,13 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -36,6 +42,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(loadState())
     val state = _state.asStateFlow()
+
+    val customCategories: StateFlow<List<CustomCategory>> = db.customCategoryDao().all()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val notInCache: StateFlow<List<Expense>> = db.expenseDao().notInCache()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Everything dated, from the cached workbook data plus what was entered on the phone since. Works offline. */
+    val entries: StateFlow<List<Entry>> = combine(_state, notInCache) { s, local -> Calc.entries(s, local) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Category names to offer everywhere: the workbook's, the laptop's extras, and ones made on the phone. */
+    val categories: StateFlow<List<String>> = combine(_state, customCategories) { s, c -> Calc.categoryNames(s, c) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Calc.DEFAULT_CATEGORIES)
+
+    /** Totals for the current month, worked out on the phone. */
+    val summary: StateFlow<MonthSummary> = combine(_state, entries, customCategories) { s, e, c ->
+        Calc.summarize(s, e, c, YearMonth.now())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, Calc.summarize(loadState(), emptyList(), emptyList(), YearMonth.now()))
     private val _status = MutableStateFlow(prefs.lastSyncMessage)
     val status = _status.asStateFlow()
     private val _lastSyncMs = MutableStateFlow(prefs.lastSyncMs)
@@ -59,7 +83,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val defaultCategories = listOf("Claude subscription", "Breakfast", "Going out", "Other")
 
     companion object {
-        const val INCOME = "Income"
+        const val INCOME = Calc.INCOME
     }
 
     private fun loadState(): ServerState? =
@@ -98,6 +122,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             sync()
             _messages.tryEmit(if (expenses.value.any { !it.synced }) "$what saved, waiting to sync" else "$what saved and synced")
         }
+    }
+
+    /** Returns an error message to show, or null when the category was saved (it syncs to the laptop later if offline). */
+    fun addCategory(rawName: String, planned: Double): String? {
+        val name = rawName.trim()
+        if (name.isEmpty() || name.length > 40) return "Use 1 to 40 characters"
+        if (name.equals(INCOME, ignoreCase = true) || categories.value.any { it.equals(name, ignoreCase = true) }) {
+            return "That category already exists"
+        }
+        viewModelScope.launch {
+            db.customCategoryDao().insert(CustomCategory(name, planned.coerceAtLeast(0.0)))
+            _messages.tryEmit("Category \"$name\" added")
+            SyncScheduler.enqueueNow(getApplication())
+            sync()
+        }
+        return null
     }
 
     fun deleteWaiting(e: Expense) {

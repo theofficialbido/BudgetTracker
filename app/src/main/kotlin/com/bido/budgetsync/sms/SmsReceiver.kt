@@ -16,7 +16,8 @@ class SmsReceiver : BroadcastReceiver() {
         if (!Prefs(context).smsEnabled) return
         val parts = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
         val bySender = parts.groupBy { it.originatingAddress ?: "" }
-        val at = parts.firstOrNull()?.timestampMillis ?: System.currentTimeMillis()
+        // Phone clock, like the inbox's "date" column, so a later inbox scan lines up with this broadcast.
+        val at = System.currentTimeMillis()
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {

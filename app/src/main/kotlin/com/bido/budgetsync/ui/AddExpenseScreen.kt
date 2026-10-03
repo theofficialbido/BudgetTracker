@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -64,6 +65,7 @@ fun AddExpenseScreen(
     var description by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(LocalDate.now()) }
     var picking by remember { mutableStateOf(false) }
+    var addingCategory by remember { mutableStateOf(false) }
     val value = amount.replace(',', '.').toDoubleOrNull()
     val effectiveCategory = if (income) MainViewModel.INCOME else category
     val accent = accentFor(effectiveCategory)
@@ -109,6 +111,11 @@ fun AddExpenseScreen(
                                 leadingIcon = { Icon(categoryIcon(c), null, Modifier.size(18.dp)) },
                             )
                         }
+                        AssistChip(
+                            onClick = { addingCategory = true },
+                            label = { Text("New category") },
+                            leadingIcon = { Icon(Icons.Default.Add, null, Modifier.size(18.dp)) },
+                        )
                     }
                 }
             }
@@ -143,6 +150,13 @@ fun AddExpenseScreen(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
             ) { Text(if (income) "Save income" else "Save expense") }
         }
+    }
+
+    if (addingCategory) {
+        AddCategoryDialog(
+            onAdd = { name, planned -> vm.addCategory(name, planned).also { error -> if (error == null) category = name.trim() } },
+            onDismiss = { addingCategory = false },
+        )
     }
 
     if (picking) {

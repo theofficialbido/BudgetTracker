@@ -35,6 +35,12 @@ fun main(args: Array<String>) {
             else reply(ex, 200, book.readState())
         }
     }
+    server.createContext("/categories") { ex ->
+        guarded(ex, cfg) {
+            if (ex.requestMethod != "POST") reply(ex, 405, mapOf("error" to "POST only"))
+            else reply(ex, 200, mapOf("results" to book.addCategories(parseCategories(ex.requestBody.readBytes()))))
+        }
+    }
     server.createContext("/expenses") { ex ->
         guarded(ex, cfg) {
             if (ex.requestMethod != "POST") reply(ex, 405, mapOf("error" to "POST only"))
@@ -52,6 +58,12 @@ fun main(args: Array<String>) {
     NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
         .flatMap { it.inetAddresses.toList() }.filterIsInstance<Inet4Address>()
         .forEach { println("Or IP    : ${it.hostAddress}:${cfg.port}") }
+}
+
+private fun parseCategories(body: ByteArray): List<NewCategory> {
+    val root = mapper.readTree(body)
+    require(root != null && root.isArray) { "Body must be a JSON array" }
+    return root.map { n -> NewCategory(n.path("name").asText(""), n.path("planned").asDouble(0.0)) }
 }
 
 private fun parse(body: ByteArray): List<NewExpense> {

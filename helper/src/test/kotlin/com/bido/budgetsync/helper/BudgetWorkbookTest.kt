@@ -61,6 +61,8 @@ class BudgetWorkbookTest {
         listOf(0.5, 0.3, 0.2).forEachIndexed { i, share ->
             planRow(18 + i).apply { createCell(1).setCellValue(share); createCell(3).setCellFormula("\$D\$15*B${18 + i}") }
         }
+        planRow(25, "WATCH level").createCell(1).setCellValue(0.8)
+        planRow(26, "OVER level").createCell(1).setCellValue(1.0)
         planRow(29, "old note").createCell(0)
         planRow(30, "old note").createCell(0)
 
@@ -138,6 +140,48 @@ class BudgetWorkbookTest {
     fun sameAmountDifferentCategoryIsNotATwin() {
         fixture()
         assertEquals("added", book.append(listOf(expense("p1", "Breakfast", "Foul", 175.0)), ledger).single().status)
+    }
+
+    @Test
+    fun customCategoryLivesOnItsOwnSheetAndCountsInTotals() {
+        fixture()
+        val added = book.addCategories(listOf(NewCategory("Gym", 300.0)))
+        assertEquals("added", added.single().status)
+        book.append(listOf(expense("g1", "Gym", "Monthly pass", 100.0), expense("g2", "gym", "Towel", 50.0)), ledger)
+        val s = book.readState()
+        assertEquals(listOf("Claude subscription", "Breakfast", "Going out", "Other", "Gym"), s.categories)
+        val gym = s.extras.single()
+        assertEquals(300.0, gym.planned)
+        assertEquals(150.0, gym.actual)                 // both rows, matched case-insensitively
+        assertEquals("OK", gym.status)
+        assertEquals(listOf("Gym", "Gym"), s.log.takeLast(2).map { it.category })   // not folded into "Other"
+        assertEquals(175.0 + 150.0, s.total.actual)     // Tracker total includes the extras
+        assertEquals(3000.0 + 300.0, s.total.planned)
+        assertEquals(0.8, s.watchAt)
+        WorkbookFactory.create(java.io.ByteArrayInputStream(Files.readAllBytes(xlsx))).use { wb ->
+            wb.creationHelper.createFormulaEvaluator().evaluateAll()
+            assertEquals(1200.0 + 300.0, wb.getSheet("Plan").getRow(12).getCell(3).numericCellValue)   // planned spending D13
+        }
+    }
+
+    @Test
+    fun categoryNamesAreCheckedAndNotDuplicated() {
+        fixture()
+        val r = book.addCategories(listOf(NewCategory("going out", 0.0), NewCategory("Income", 0.0), NewCategory("Gym", 0.0), NewCategory("GYM", 5.0)))
+        assertEquals(listOf("exists", "exists", "added", "exists"), r.map { it.status })
+        assertEquals(1, book.readState().extras.size)
+        assertFailsWith<IllegalArgumentException> { book.addCategories(listOf(NewCategory("  ", 0.0))) }
+        assertFailsWith<IllegalArgumentException> { book.addCategories(listOf(NewCategory("x", -1.0))) }
+        // adding the same list again changes nothing
+        assertEquals(listOf("exists"), book.addCategories(listOf(NewCategory("Gym", 0.0))).map { it.status })
+    }
+
+    @Test
+    fun overBudgetExtraCategoryShowsOver() {
+        fixture()
+        book.addCategories(listOf(NewCategory("Gym", 100.0)))
+        book.append(listOf(expense("g", "Gym", "Pass", 120.0)), ledger)
+        assertEquals("OVER", book.readState().extras.single().status)
     }
 
     @Test

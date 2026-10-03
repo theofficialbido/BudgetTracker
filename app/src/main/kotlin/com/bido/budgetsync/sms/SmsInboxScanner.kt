@@ -24,9 +24,12 @@ object SmsInboxScanner {
         val prefs = Prefs(context)
         if (prefs.senders.none { sameSender(it, sender) }) return
         val parsed = SmsParser.parse(body) ?: return
-        val key = "$sender|$receivedAt|${body.hashCode()}"
+        // The broadcast and the inbox record the same message with slightly different times, so the time is not part of
+        // the identity: same sender and same text within a few minutes is one message, however many times it is seen.
+        val hash = body.trim().hashCode()
+        val key = "$sender|$receivedAt|$hash"
         AppDatabase.get(context).pendingSmsDao()
-            .insert(PendingSms(key, sender, parsed.amount, parsed.merchant, receivedAt))
+            .insertIfNew(PendingSms(key, sender, parsed.amount, parsed.merchant, receivedAt, bodyHash = hash))
     }
 
     /** Reads inbox messages newer than the last scan from the chosen senders. */

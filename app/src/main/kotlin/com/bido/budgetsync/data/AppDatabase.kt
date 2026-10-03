@@ -8,12 +8,19 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ExpenseDao {
     @Query("SELECT * FROM expenses ORDER BY createdAt DESC LIMIT 100")
     fun recent(): Flow<List<Expense>>
+
+    /** Entries the cached workbook data does not contain yet; the offline totals add these on top of it. */
+    @Query("SELECT * FROM expenses WHERE inCache = 0 ORDER BY createdAt DESC")
+    fun notInCache(): Flow<List<Expense>>
 
     @Query("SELECT * FROM expenses WHERE synced = 0 ORDER BY createdAt")
     suspend fun unsynced(): List<Expense>
@@ -26,30 +33,83 @@ interface ExpenseDao {
 
     @Query("UPDATE expenses SET synced = 1 WHERE id IN (:ids)")
     suspend fun markSynced(ids: List<String>)
+
+    /** Call right after a successful state fetch: everything already synced is now part of that state. */
+    @Query("UPDATE expenses SET inCache = 1 WHERE synced = 1")
+    suspend fun markInCache()
 }
 
 @Dao
-interface PendingSmsDao {
-    @Query("SELECT * FROM pending_sms WHERE status = 'PENDING' ORDER BY receivedAt DESC")
-    fun pending(): Flow<List<PendingSms>>
+interface CustomCategoryDao {
+    @Query("SELECT * FROM custom_categories ORDER BY name COLLATE NOCASE")
+    fun all(): Flow<List<CustomCategory>>
+
+    @Query("SELECT * FROM custom_categories WHERE synced = 0")
+    suspend fun unsynced(): List<CustomCategory>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insert(sms: PendingSms): Long
+    suspend fun insert(category: CustomCategory): Long
 
-    @Query("UPDATE pending_sms SET status = :status WHERE `key` = :key")
-    suspend fun setStatus(key: String, status: String)
+    @Query("UPDATE custom_categories SET synced = 1 WHERE name IN (:names)")
+    suspend fun markSynced(names: List<String>)
 }
 
-@Database(entities = [Expense::class, PendingSms::class], version = 1, exportSchema = false)
+@Dao
+abstract class PendingSmsDao {
+    @Query("SELECT * FROM pending_sms WHERE status = 'PENDING' ORDER BY receivedAt DESC")
+    abstract fun pending(): Flow<List<PendingSms>>
+
+    @Query(
+        "SELECT COUNT(*) FROM pending_sms WHERE sender = :sender AND bodyHash = :hash " +
+            "AND ABS(receivedAt - :at) < ${PendingSms.SAME_MESSAGE_WINDOW_MS}"
+    )
+    abstract suspend fun countSame(sender: String, hash: Int, at: Long): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun insert(sms: PendingSms): Long
+
+    /** Check and insert in one transaction so the receiver and an inbox scan running together cannot both add the message. */
+    @Transaction
+    open suspend fun insertIfNew(sms: PendingSms): Boolean {
+        if (countSame(sms.sender, sms.bodyHash, sms.receivedAt) > 0) return false
+        return insert(sms) != -1L
+    }
+
+    @Query("UPDATE pending_sms SET status = :status WHERE `key` = :key")
+    abstract suspend fun setStatus(key: String, status: String)
+}
+
+@Database(entities = [Expense::class, PendingSms::class, CustomCategory::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun expenseDao(): ExpenseDao
     abstract fun pendingSmsDao(): PendingSmsDao
+    abstract fun customCategoryDao(): CustomCategoryDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
 
+        /** Keeps queued entries: adds the new columns/table and removes duplicate pending SMS rows already saved. */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE expenses ADD COLUMN inCache INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE expenses SET inCache = synced")
+                db.execSQL("ALTER TABLE pending_sms ADD COLUMN bodyHash INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS custom_categories (name TEXT NOT NULL, planned REAL NOT NULL, " +
+                        "synced INTEGER NOT NULL, PRIMARY KEY(name))"
+                )
+                db.execSQL(
+                    "DELETE FROM pending_sms WHERE EXISTS (SELECT 1 FROM pending_sms p2 WHERE p2.sender = pending_sms.sender " +
+                        "AND p2.amount = pending_sms.amount AND p2.merchant = pending_sms.merchant " +
+                        "AND ABS(p2.receivedAt - pending_sms.receivedAt) < ${PendingSms.SAME_MESSAGE_WINDOW_MS} " +
+                        "AND p2.rowid < pending_sms.rowid)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "budgetsync.db")
+                .addMigrations(MIGRATION_1_2)
                 .build().also { instance = it }
         }
     }

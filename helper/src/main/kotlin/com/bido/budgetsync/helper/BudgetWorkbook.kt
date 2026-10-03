@@ -21,7 +21,7 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 class BusyException(message: String) : Exception(message)
-class FullException(sheet: String) : Exception("The $sheet sheet is full (rows 2 to 1000). Archive old rows in Budget.xlsx.")
+class FullException(sheet: String, last: Int = 1000) : Exception("The $sheet sheet is full (rows 2 to $last). Archive old rows in Budget.xlsx.")
 
 data class NewExpense(val id: String, val date: LocalDate, val category: String, val description: String, val amount: Double)
 data class AppendResult(val id: String, val row: Int, val status: String)
@@ -39,7 +39,12 @@ data class State(
     val plannedIncome: Double,     // Plan!D7
     val leftAfterActual: Double,
     val incomeReceived: Double,    // Income sheet rows dated this month
+    val extras: List<TrackerRow>,  // categories added from the phone, kept on the "More categories" sheet
+    val watchAt: Double,           // Plan!B25, alert level for WATCH (0.8 = 80%)
+    val overAt: Double,            // Plan!B26, alert level for OVER
 )
+data class NewCategory(val name: String, val planned: Double)
+data class CategoryResult(val name: String, val status: String)
 data class UpgradeReport(val alreadyUpgraded: Boolean, val movedRows: Int, val backup: Path?)
 
 /** Reads and appends to Budget.xlsx. Expenses go to Log A:D, income to the Income sheet A:C; nothing else is written. */
@@ -50,6 +55,12 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
         const val INCOME = "Income"          // category the phone uses for income entries
         const val LOG = "Log"
         const val INCOME_SHEET = "Income"
+        const val EXTRA_SHEET = "More categories"   // categories added from the phone: name, planned, then live actual/status
+        const val EXTRA_FIRST = 2
+        const val EXTRA_LAST = 51                    // room for 50 extra categories
+        private const val EXTRA_REF = "'More categories'!"
+        private const val MONTH_OF_LOG =
+            "Log!\$A\$2:\$A\$1000,\">=\"&Tracker!\$B\$2,Log!\$A\$2:\$A\$1000,\"<\"&EDATE(Tracker!\$B\$2,1)"
         const val INCOME_FORMULA =
             "SUMIFS(Income!\$C\$2:\$C\$1000,Income!\$A\$2:\$A\$1000,\">=\"&\$B\$2,Income!\$A\$2:\$A\$1000,\"<\"&EDATE(\$B\$2,1))"
     }
@@ -70,9 +81,14 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
             val rows = (5..8).map { trackerRow(tracker, it, ev) }
             val month = LocalDate.now().toString().substring(0, 7)
             val income = wb.getSheet(INCOME_SHEET)?.let { readIncome(it) } ?: emptyList()
+            val extras = wb.getSheet(EXTRA_SHEET)?.let { readExtras(it, ev) } ?: emptyList()
+            val plan = wb.getSheet("Plan")
             return State(
                 month = month,
-                categories = rows.map { it.category },
+                categories = rows.map { it.category } + extras.map { it.category },
+                extras = extras,
+                watchAt = plan?.cell(25, 1)?.let { num(it, ev) }?.takeIf { it > 0 } ?: 0.8,
+                overAt = plan?.cell(26, 1)?.let { num(it, ev) }?.takeIf { it > 0 } ?: 1.0,
                 log = readLog(log),
                 incomeLog = income,
                 tracker = rows,
@@ -91,8 +107,9 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
         val before = mtime()
         open().use { wb ->
             val log = wb.getSheet(LOG) ?: error("Sheet 'Log' not found")
-            val categories = wb.getSheet("Tracker")
-                ?.let { t -> (5..8).map { str(t.cell(it, 0)) }.filter { c -> c.isNotBlank() } } ?: emptyList()
+            val categories = (wb.getSheet("Tracker")
+                ?.let { t -> (5..8).map { str(t.cell(it, 0)) }.filter { c -> c.isNotBlank() } } ?: emptyList()) +
+                (wb.getSheet(EXTRA_SHEET)?.let { extraNames(it) } ?: emptyList())
             val results = ArrayList<AppendResult>()
             val assigned = LinkedHashMap<String, Slot>()
             var wrote = false
@@ -117,8 +134,8 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
                 val row = if (known != null && isEmpty(sheet, layout, known)) known
                 else firstEmpty(sheet, layout) ?: throw FullException(layout.sheet)
                 if (isIncome) writeIncome(sheet, row, item) else {
-                    val category = if (item.category in categories) item.category
-                    else categories.firstOrNull { it == "Other" } ?: categories.firstOrNull() ?: item.category
+                    val category = categories.firstOrNull { it.equals(item.category, ignoreCase = true) }
+                        ?: categories.firstOrNull { it == "Other" } ?: categories.firstOrNull() ?: item.category
                     writeLog(sheet, row, item.copy(category = category))
                 }
                 assigned[item.id] = Slot(layout.sheet, row)
@@ -165,8 +182,10 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
             val plan = wb.getSheet("Plan")
             val planD7 = plan?.cell(7, 3)
             val planLinked = plan == null || planD7 == null || (planD7.cellType == CellType.FORMULA && planD7.cellFormula.contains("Income!"))
-            if (existed && linked && planLinked && moves.isEmpty()) return UpgradeReport(true, 0, null)
+            val extrasLinked = wb.getSheet(EXTRA_SHEET) != null && extrasAreLinked(wb)
+            if (existed && linked && planLinked && extrasLinked && moves.isEmpty()) return UpgradeReport(true, 0, null)
             val backup = backup()
+            if (!extrasLinked) { ensureExtraSheet(wb, log); linkExtras(wb) }
             if (!linked) {
                 c11.cellFormula = INCOME_FORMULA
                 setText(tracker, 11, 0, "Income received this month")
@@ -215,7 +234,105 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
         val dir = dataDir.resolve("backups")
         Files.createDirectories(dir)
         val stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
-        return Files.copy(path, dir.resolve("Budget-before-income-upgrade-$stamp.xlsx"))
+        return Files.copy(path, dir.resolve("Budget-before-upgrade-$stamp.xlsx"))
+    }
+
+    /** Adds categories created on the phone to the "More categories" sheet. Existing names (any case) are left alone. */
+    @Synchronized
+    fun addCategories(items: List<NewCategory>): List<CategoryResult> {
+        if (Files.exists(lockFile)) throw BusyException("Budget.xlsx is open in Excel")
+        val before = mtime()
+        open().use { wb ->
+            val log = wb.getSheet(LOG) ?: error("Sheet 'Log' not found")
+            val tracker = wb.getSheet("Tracker") ?: error("Sheet 'Tracker' not found")
+            val ready = wb.getSheet(EXTRA_SHEET) != null && extrasAreLinked(wb)
+            val sheet = ensureExtraSheet(wb, log)
+            val reserved = (5..8).map { str(tracker.cell(it, 0)) } + INCOME
+            val results = ArrayList<CategoryResult>()
+            var wrote = false
+            for (item in items) {
+                val name = item.name.trim()
+                require(name.length in 1..40 && name.none { it.isISOControl() }) { "category name must be 1 to 40 characters" }
+                require(item.planned.isFinite() && item.planned >= 0) { "planned amount must be 0 or more" }
+                if ((reserved + extraNames(sheet)).any { it.equals(name, ignoreCase = true) }) {
+                    results += CategoryResult(name, "exists")
+                    continue
+                }
+                val row = (EXTRA_FIRST..EXTRA_LAST).firstOrNull { r -> str(sheet.cell(r, 0)).isBlank() }
+                    ?: throw FullException(EXTRA_SHEET, EXTRA_LAST)
+                sheet.cell(row, 0)?.setCellValue(name)
+                sheet.cell(row, 1)?.setCellValue(item.planned)
+                results += CategoryResult(name, "added")
+                wrote = true
+            }
+            if (!wrote && ready) return results
+            if (!ready) { backup(); linkExtras(wb) }
+            finish(wb, before)
+            return results
+        }
+    }
+
+    private fun extraNames(sheet: Sheet): List<String> =
+        (EXTRA_FIRST..EXTRA_LAST).map { str(sheet.cell(it, 0)).trim() }.filter { it.isNotEmpty() }
+
+    private fun readExtras(sheet: Sheet, ev: FormulaEvaluator): List<TrackerRow> = (EXTRA_FIRST..EXTRA_LAST).mapNotNull { r ->
+        val name = str(sheet.cell(r, 0)).trim()
+        if (name.isEmpty()) null
+        else TrackerRow(name, num(sheet.cell(r, 1), ev), num(sheet.cell(r, 2), ev), num(sheet.cell(r, 3), ev), str(sheet.cell(r, 4), ev))
+    }
+
+    private fun extrasAreLinked(wb: Workbook): Boolean {
+        val b9 = wb.getSheet("Tracker")?.cell(9, 1) ?: return true   // no Tracker total to link
+        return b9.cellType == CellType.FORMULA && b9.cellFormula.contains("More categories")
+    }
+
+    /** Tracker totals (planned B9, actual C9, so "left after actual spending" too) and Plan's planned spending (D13) include the extras. */
+    private fun linkExtras(wb: Workbook) {
+        val tracker = wb.getSheet("Tracker")
+        tracker?.cell(9, 1)?.cellFormula = "SUM(B5:B8)+${EXTRA_REF}\$G\$2"
+        tracker?.cell(9, 2)?.cellFormula = "SUM(C5:C8)+${EXTRA_REF}\$H\$2"
+        wb.getSheet("Plan")?.cell(13, 3)?.cellFormula = "SUM(D10:D12)+${EXTRA_REF}\$G\$2"
+    }
+
+    private fun ensureExtraSheet(wb: Workbook, log: Sheet): Sheet {
+        wb.getSheet(EXTRA_SHEET)?.let { return it }
+        val tracker = wb.getSheet("Tracker")
+        val sheet = wb.createSheet(EXTRA_SHEET)
+        fun logStyle(r: Int, c: Int) = log.getRow(r)?.getCell(c)?.cellStyle
+        fun trackerStyle(r: Int, c: Int) = tracker?.getRow(r)?.getCell(c)?.cellStyle
+        sheet.createRow(0).apply {
+            listOf("Category", "Planned (EGP)", "Actual so far", "% used", "Status").forEachIndexed { i, h ->
+                createCell(i).apply { setCellValue(h); logStyle(0, 0)?.let { cellStyle = it } }
+            }
+            createCell(6).apply { setCellValue("Total planned"); logStyle(0, 0)?.let { cellStyle = it } }
+            createCell(7).apply { setCellValue("Total actual"); logStyle(0, 0)?.let { cellStyle = it } }
+            createCell(9).apply { setCellValue("How to use"); logStyle(0, 5)?.let { cellStyle = it } }
+        }
+        for (r in EXTRA_FIRST..EXTRA_LAST) {
+            val row = sheet.createRow(r - 1)
+            row.createCell(0).also { c -> logStyle(1, 1)?.let { c.cellStyle = it } }
+            row.createCell(1).also { c -> logStyle(1, 3)?.let { c.cellStyle = it } }
+            row.createCell(2).apply {
+                cellFormula = "IF(\$A$r=\"\",0,SUMIFS(Log!\$D\$2:\$D\$1000,Log!\$B\$2:\$B\$1000,\$A$r,$MONTH_OF_LOG))"
+                logStyle(1, 3)?.let { cellStyle = it }
+            }
+            row.createCell(3).apply { cellFormula = "IF(B$r=0,0,C$r/B$r)"; trackerStyle(4, 3)?.let { cellStyle = it } }
+            row.createCell(4).apply {
+                cellFormula = "IF(\$A$r=\"\",\"\",IF(B$r=0,IF(C$r>0,\"UNPLANNED\",\"OK\"),IF(C$r/B$r>=Plan!\$B\$26,\"OVER\",IF(C$r/B$r>=Plan!\$B\$25,\"WATCH\",\"OK\"))))"
+                trackerStyle(4, 4)?.let { cellStyle = it }
+            }
+        }
+        sheet.getRow(1).apply {
+            createCell(6).apply { cellFormula = "SUM(B$EXTRA_FIRST:B$EXTRA_LAST)"; logStyle(1, 3)?.let { cellStyle = it } }
+            createCell(7).apply { cellFormula = "SUM(C$EXTRA_FIRST:C$EXTRA_LAST)"; logStyle(1, 3)?.let { cellStyle = it } }
+            createCell(9).apply {
+                setCellValue("Categories added in the Budget Tracker app land here. To add one by hand, type a name in column A and a monthly plan in B. The Tracker totals include this sheet.")
+                logStyle(1, 5)?.let { cellStyle = it }
+            }
+        }
+        listOf(0 to 28, 1 to 16, 2 to 16, 3 to 10, 4 to 14, 6 to 16, 7 to 16, 9 to 70).forEach { (c, w) -> sheet.setColumnWidth(c, w * 256) }
+        sheet.createFreezePane(0, 1)
+        return sheet
     }
 
     private fun ensureIncomeSheet(wb: Workbook, log: Sheet): Sheet {
