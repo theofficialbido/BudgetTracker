@@ -29,4 +29,14 @@ First run prints a pairing token; enter it in the app's Settings. Options: `--wo
 
 One-time workbook upgrade (adds the Income sheet and links Tracker and Plan income to it; makes a backup first): stop the helper, close Excel, then run with `--upgrade`.
 
+## Updating the phone app without losing data
+
+Android installs a new APK over the old app, keeping all its data, only if the package name and signing key are the same and the build number is higher. Every build is signed with the debug keystore (`%USERPROFILE%\.android\debug.keystore`, keep a backup) and gets a build number from the clock, so each build is newer than the last.
+
+1. Build and publish: `gradlew :helper:jar :app:publishUpdate` (copies the APK and `version.json` to `%LOCALAPPDATA%\BudgetSync\update`).
+2. Restart the helper if the helper code changed.
+3. On the phone, with the laptop reachable: Settings, App updates, Check for update, then Download and install. The first time, Android asks to allow installs from this app.
+
+The helper serves `GET /app/version` and `GET /app/apk`, both behind the pairing token.
+
 The helper only listens on your local network over plain HTTP and requires the pairing token on every request.

@@ -96,6 +96,32 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
         return (0 until res.length()).map { res.getJSONObject(it).getString("id") }.toSet()
     }
 
+    /** What build the laptop has published for the phone, as (versionCode, versionName). */
+    fun fetchVersion(): Pair<Long, String> {
+        val o = JSONObject(request("GET", "/app/version", null))
+        return o.getLong("versionCode") to o.optString("versionName", "")
+    }
+
+    /** Streams the published APK to [dest]. */
+    fun downloadApk(dest: java.io.File) {
+        val conn = URL(base + "/app/apk").openConnection() as HttpURLConnection
+        try {
+            conn.connectTimeout = connectMs
+            conn.readTimeout = 30000
+            conn.setRequestProperty("X-Token", token)
+            when (val code = conn.responseCode) {
+                200 -> { dest.parentFile?.mkdirs(); conn.inputStream.use { input -> dest.outputStream().use { input.copyTo(it) } } }
+                401 -> throw SyncException(SyncException.Kind.AUTH, "Wrong pairing token")
+                404 -> throw SyncException(SyncException.Kind.OTHER, "No update published on the laptop yet")
+                else -> throw SyncException(SyncException.Kind.OTHER, "Laptop answered $code")
+            }
+        } catch (e: IOException) {
+            throw SyncException(SyncException.Kind.UNREACHABLE, "Laptop not reachable")
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     /** Sends categories created on the phone. Returns the names the laptop now has (added, or already there). */
     fun pushCategories(items: List<CustomCategory>): Set<String> {
         val body = JSONArray().apply {
@@ -167,6 +193,14 @@ object Syncer {
             attempt(Discovery.find(context))?.let { return it }
         }
         return attempt(prefs.host)
+    }
+
+    /** A client for whichever laptop address answers right now, or null. Used by the app updater. */
+    suspend fun connectedClient(context: Context): SyncClient? = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val prefs = Prefs(context)
+            if (prefs.token.isBlank()) null else try { connect(context, prefs)?.first } catch (_: SyncException) { null }
+        }
     }
 
     suspend fun run(context: Context): SyncOutcome = mutex.withLock {

@@ -66,6 +66,7 @@ import com.bido.budgetsync.data.CategorySummary
 import com.bido.budgetsync.data.Entry
 import com.bido.budgetsync.data.Expense
 import com.bido.budgetsync.data.MonthSummary
+import com.bido.budgetsync.data.UpdateCheck
 import java.text.DateFormat
 import java.time.LocalDate
 import java.util.Date
@@ -87,6 +88,7 @@ fun HomeScreen(
     val status by vm.status.collectAsState()
     val syncing by vm.syncing.collectAsState()
     val lastSync by vm.lastSyncMs.collectAsState()
+    val update by vm.update.collectAsState()
 
     var filter by rememberSaveable { mutableStateOf<String?>(null) }
     var fabOpen by rememberSaveable { mutableStateOf(false) }
@@ -153,6 +155,20 @@ fun HomeScreen(
                             Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("${pending.size} bank message${if (pending.size == 1) "" else "s"} to review", Modifier.weight(1f), fontWeight = FontWeight.Medium)
                                 TextButton(onClick = onReview) { Text("Review") }
+                            }
+                        }
+                    }
+                }
+
+                (update as? UpdateCheck.Available)?.let { available ->
+                    item(key = "update") {
+                        Card(
+                            Modifier.fillMaxWidth().clickable(onClick = onSettings),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                        ) {
+                            Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Update available (${available.info.versionName}). Your data is kept.", Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                                TextButton(onClick = onSettings) { Text("Install") }
                             }
                         }
                     }

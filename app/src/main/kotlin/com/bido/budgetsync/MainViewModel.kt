@@ -14,6 +14,8 @@ import com.bido.budgetsync.data.Prefs
 import com.bido.budgetsync.data.ServerState
 import com.bido.budgetsync.data.SyncScheduler
 import com.bido.budgetsync.data.Syncer
+import com.bido.budgetsync.data.UpdateCheck
+import com.bido.budgetsync.data.Updater
 import com.bido.budgetsync.sms.SmsInboxScanner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -94,6 +96,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { SmsInboxScanner.scan(getApplication()) }
             sync()
+            checkForUpdate()
+        }
+    }
+
+    private val _update = MutableStateFlow<UpdateCheck?>(null)
+    val update = _update.asStateFlow()
+    private val _checkingUpdate = MutableStateFlow(false)
+    val checkingUpdate = _checkingUpdate.asStateFlow()
+
+    /** Asks the laptop whether it has a newer build of this app. */
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            _checkingUpdate.value = true
+            _update.value = Updater.check(getApplication())
+            _checkingUpdate.value = false
+        }
+    }
+
+    /** Downloads the published build and opens Android's installer; the install keeps all app data. */
+    fun installUpdate() {
+        viewModelScope.launch {
+            _checkingUpdate.value = true
+            Updater.downloadAndInstall(getApplication())?.let { _messages.tryEmit(it) }
+            _checkingUpdate.value = false
         }
     }
 

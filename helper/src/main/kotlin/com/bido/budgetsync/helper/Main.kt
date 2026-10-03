@@ -8,6 +8,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
@@ -33,6 +34,17 @@ fun main(args: Array<String>) {
         guarded(ex, cfg) {
             if (ex.requestMethod != "GET") reply(ex, 405, mapOf("error" to "GET only"))
             else reply(ex, 200, book.readState())
+        }
+    }
+    // The app updates itself from here: version.json says what is published, app.apk is the build to install.
+    val updateDir = cfg.dataDir.resolve("update")
+    server.createContext("/app") { ex ->
+        guarded(ex, cfg) {
+            val name = when (ex.requestURI.path) { "/app/version" -> "version.json"; "/app/apk" -> "app.apk"; else -> null }
+            val file = name?.let { updateDir.resolve(it) }
+            if (ex.requestMethod != "GET") reply(ex, 405, mapOf("error" to "GET only"))
+            else if (file == null || !Files.isRegularFile(file)) reply(ex, 404, mapOf("error" to "no update published"))
+            else replyFile(ex, file, if (name == "app.apk") "application/vnd.android.package-archive" else "application/json; charset=utf-8")
         }
     }
     server.createContext("/categories") { ex ->
@@ -101,6 +113,12 @@ private fun guarded(ex: HttpExchange, cfg: Config, block: () -> Unit) {
     } finally {
         ex.close()
     }
+}
+
+private fun replyFile(ex: HttpExchange, file: java.nio.file.Path, type: String) {
+    ex.responseHeaders.add("Content-Type", type)
+    ex.sendResponseHeaders(200, Files.size(file))
+    ex.responseBody.use { out -> Files.newInputStream(file).use { it.copyTo(out) } }
 }
 
 private fun reply(ex: HttpExchange, code: Int, body: Any) {

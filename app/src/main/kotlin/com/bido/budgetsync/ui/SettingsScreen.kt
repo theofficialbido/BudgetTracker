@@ -36,7 +36,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.text.font.FontWeight
 import com.bido.budgetsync.MainViewModel
+import com.bido.budgetsync.data.UpdateCheck
+import com.bido.budgetsync.data.Updater
 import com.bido.budgetsync.sms.SmsInboxScanner
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,6 +49,8 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val savedHost by vm.host.collectAsState()
     val savedToken by vm.token.collectAsState()
+    val update by vm.update.collectAsState()
+    val checking by vm.checkingUpdate.collectAsState()
     val autoDiscover by vm.autoDiscover.collectAsState()
     val smsEnabled by vm.smsEnabled.collectAsState()
     val senders by vm.senders.collectAsState()
@@ -91,6 +97,29 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             )
             Button(onClick = { vm.saveConnection(host, token) }, enabled = !syncing) { Text("Save and test connection") }
             if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("App updates", style = MaterialTheme.typography.titleMedium)
+            val installed = remember { Updater.installedVersion(ctx) }
+            Text(
+                "Installed: ${installed.second} (build ${installed.first}). Updates come from your laptop and install over this app, so your settings, token, queued entries and categories are kept.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            when (val u = update) {
+                is UpdateCheck.Available -> Text("Update available: ${u.info.versionName} (build ${u.info.versionCode})", fontWeight = FontWeight.Bold)
+                is UpdateCheck.UpToDate -> Text("You have the latest version.")
+                is UpdateCheck.Failed -> Text(u.message, color = MaterialTheme.colorScheme.error)
+                null -> {}
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { vm.checkForUpdate() }, enabled = !checking) { Text(if (checking) "Working…" else "Check for update") }
+                if (update is UpdateCheck.Available) {
+                    Button(
+                        onClick = { if (Updater.canInstall(ctx)) vm.installUpdate() else Updater.openInstallPermissionSettings(ctx) },
+                        enabled = !checking,
+                    ) { Text(if (Updater.canInstall(ctx)) "Download and install" else "Allow installs, then tap again") }
+                }
+            }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text("Bank SMS detection", style = MaterialTheme.typography.titleMedium)
