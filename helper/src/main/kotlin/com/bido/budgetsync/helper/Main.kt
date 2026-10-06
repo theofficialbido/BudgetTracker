@@ -50,13 +50,13 @@ fun main(args: Array<String>) {
     server.createContext("/categories") { ex ->
         guarded(ex, cfg) {
             if (ex.requestMethod != "POST") reply(ex, 405, mapOf("error" to "POST only"))
-            else reply(ex, 200, mapOf("results" to book.addCategories(parseCategories(ex.requestBody.readBytes()))))
+            else reply(ex, 200, mapOf("results" to book.addCategories(parseCategories(readBody(ex)))))
         }
     }
     server.createContext("/expenses") { ex ->
         guarded(ex, cfg) {
             if (ex.requestMethod != "POST") reply(ex, 405, mapOf("error" to "POST only"))
-            else reply(ex, 200, mapOf("results" to book.append(parse(ex.requestBody.readBytes()), ledger)))
+            else reply(ex, 200, mapOf("results" to book.append(parse(readBody(ex)), ledger)))
         }
     }
     server.start()
@@ -70,6 +70,14 @@ fun main(args: Array<String>) {
     NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
         .flatMap { it.inetAddresses.toList() }.filterIsInstance<Inet4Address>()
         .forEach { println("Or IP    : ${it.hostAddress}:${cfg.port}") }
+}
+
+/** Request bodies here are small JSON lists; refuse anything huge instead of reading it all into memory. */
+private fun readBody(ex: HttpExchange): ByteArray {
+    val limit = 1_000_000
+    val bytes = ex.requestBody.readNBytes(limit + 1)
+    require(bytes.size <= limit) { "request body too large" }
+    return bytes
 }
 
 private fun parseCategories(body: ByteArray): List<NewCategory> {

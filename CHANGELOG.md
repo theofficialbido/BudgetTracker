@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4
+
+### Changed
+- The app is now a proper release build (not debuggable), named `BudgetTracker.apk`. It is signed with the same key as before, so it installs over the current app and keeps its data. The package name is unchanged on purpose: changing it would make Android treat it as a different app and lose all data.
+
+### Fixed
+- **Amounts:** typing `1,200` was read as 1.2. Thousands separators, decimal commas and Arabic digits are now understood everywhere an amount is typed.
+- **"Saved and synced" message** could never appear: the save did not wait for the sync before checking. It now waits and reports the real result.
+- **Sync spinner** turned off as soon as the first of several overlapping syncs finished.
+- **Month rollover:** the home screen kept showing last month's numbers if the app stayed open across midnight on the 1st.
+- **A failed refresh after a successful send** was reported as a failed sync. It is now reported as synced, and the entries stay counted from the phone until fresh numbers arrive.
+- **Slow retries:** the update check repeated the full slow search for the laptop right after a sync had failed to find it, delaying saves; it now skips for 20 seconds.
+- **Retried entries:** a retry could be mistaken for a different entry with the same amount; the date is now compared too.
+- **SMS:** a credit notice that mentioned a purchase limit was read as spending. A message about money coming in now needs a clear debit word.
+- **Bank message review** defaulted to the most recently added category instead of "Other".
+- **Pre-filled amounts** in bank message review could appear in scientific notation.
+- **Update button** did not refresh after granting "install unknown apps".
+- The helper now refuses request bodies over 1 MB, and sync cancellation is no longer swallowed.
+
 ## 1.3
 
 ### Fixed

@@ -171,6 +171,10 @@ data class SyncOutcome(val ok: Boolean, val message: String, val retry: Boolean)
 object Syncer {
     private val mutex = Mutex()
 
+    /** When the laptop last failed to answer. Background checks (like the update check) skip trying again for a while. */
+    @Volatile private var unreachableAt = 0L
+    private const val RETRY_AFTER_MS = 20_000L
+
     /**
      * Finds an address that answers: the one that worked last time, then whatever the laptop announces on this network,
      * then the manual address from Settings. Only "no answer" moves on to the next candidate; a real reply
@@ -188,18 +192,23 @@ object Syncer {
                 if (e.kind == SyncException.Kind.UNREACHABLE) null else throw e
             }
         }
-        if (prefs.autoDiscover) {
-            attempt(prefs.lastHost)?.let { return it }
-            attempt(Discovery.find(context))?.let { return it }
-        }
-        return attempt(prefs.host)
+        val found = (if (prefs.autoDiscover) attempt(prefs.lastHost) ?: attempt(Discovery.find(context)) else null)
+            ?: attempt(prefs.host)
+        unreachableAt = if (found == null) System.currentTimeMillis() else 0L
+        return found
     }
 
-    /** A client for whichever laptop address answers right now, or null. Used by the app updater. */
-    suspend fun connectedClient(context: Context): SyncClient? = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            val prefs = Prefs(context)
-            if (prefs.token.isBlank()) null else try { connect(context, prefs)?.first } catch (_: SyncException) { null }
+    /**
+     * A client for whichever laptop address answers right now, or null. Used by the app updater. If a sync just found the
+     * laptop unreachable it returns null at once instead of waiting through the same slow attempts again.
+     */
+    suspend fun connectedClient(context: Context): SyncClient? {
+        if (System.currentTimeMillis() - unreachableAt < RETRY_AFTER_MS) return null
+        return mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val prefs = Prefs(context)
+                if (prefs.token.isBlank()) null else try { connect(context, prefs)?.first } catch (_: SyncException) { null }
+            }
         }
     }
 
@@ -207,7 +216,7 @@ object Syncer {
         withContext(Dispatchers.IO) {
             val prefs = Prefs(context)
             val outcome = try {
-                if (prefs.token.isBlank() || prefs.host.isBlank()) {
+                if (prefs.token.isBlank() || (prefs.host.isBlank() && !prefs.autoDiscover)) {
                     SyncOutcome(false, "Not paired yet: open Settings and enter the laptop token", false)
                 } else {
                     val (client, address, firstState) = connect(context, prefs)
@@ -227,13 +236,31 @@ object Syncer {
                         dao.markSynced(client.push(queued).toList())
                         changed = true
                     }
-                    if (changed) state = client.fetchState()
+                    // After sending, fetch fresh numbers. If that one request fails the sending still worked, so keep the
+                    // older state and do not mark entries as included in it: they stay counted from the phone.
+                    var fresh = true
+                    if (changed) {
+                        try { state = client.fetchState() } catch (e: SyncException) {
+                            if (e.kind != SyncException.Kind.UNREACHABLE && e.kind != SyncException.Kind.BUSY) throw e
+                            fresh = false
+                        }
+                    }
                     prefs.cachedState = state
-                    dao.markInCache()   // the fresh state contains everything synced so far
+                    if (fresh) dao.markInCache()   // the fresh state contains everything synced so far
                     prefs.lastHost = address
                     val left = dao.unsynced().size
-                    SyncOutcome(true, if (left == 0) "Synced via $address" else "$left still waiting to sync", left > 0)
+                    SyncOutcome(
+                        true,
+                        when {
+                            left > 0 -> "$left still waiting to sync"
+                            !fresh -> "Synced via $address (couldn't refresh the numbers, will on the next sync)"
+                            else -> "Synced via $address"
+                        },
+                        left > 0,
+                    )
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: SyncException) {
                 SyncOutcome(false, e.message ?: "Sync failed", e.kind == SyncException.Kind.UNREACHABLE || e.kind == SyncException.Kind.BUSY)
             } catch (e: Exception) {

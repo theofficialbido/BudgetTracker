@@ -9,7 +9,7 @@ plugins {
 // key and a higher versionCode. The key is the debug keystore, which stays the same on this laptop. The versionCode is
 // minutes since 2026-01-01, so every build is newer than the last one without anyone remembering to bump it.
 val appVersionCode = ((System.currentTimeMillis() - 1_767_225_600_000L) / 60_000L).toInt()
-val appVersionName = "1.3"
+val appVersionName = "1.4"
 
 android {
     namespace = "com.bido.budgetsync"
@@ -22,6 +22,26 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
     }
+
+    // The release build is the real app: not debuggable, no developer tooling. It is signed with the same key as the app
+    // already installed, otherwise Android would refuse to update it in place and the phone's data would have to be wiped.
+    // (A Google Play release would use its own upload key instead.)
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+    buildTypes {
+        release {
+            isDebuggable = false
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+    lint { checkReleaseBuilds = false }
 
     buildFeatures { compose = true }
     compileOptions {
@@ -39,13 +59,16 @@ kotlin { jvmToolchain(17) }
  */
 tasks.register("publishUpdate") {
     group = "distribution"
-    dependsOn("assembleDebug")
+    dependsOn("assembleRelease")
     doLast {
         val dir = File(System.getenv("LOCALAPPDATA") ?: error("LOCALAPPDATA is not set"), "BudgetSync/update")
         dir.mkdirs()
-        layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile.copyTo(File(dir, "app.apk"), overwrite = true)
+        val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        apk.copyTo(File(dir, "app.apk"), overwrite = true)
         File(dir, "version.json").writeText("""{"versionCode":$appVersionCode,"versionName":"$appVersionName"}""")
-        println("Published version $appVersionName (build $appVersionCode) to $dir")
+        // a copy with a friendly name in the project folder, for installing by hand the first time
+        apk.copyTo(File(rootProject.projectDir, "BudgetTracker.apk"), overwrite = true)
+        println("Published Budget Tracker $appVersionName (build $appVersionCode) to $dir")
     }
 }
 

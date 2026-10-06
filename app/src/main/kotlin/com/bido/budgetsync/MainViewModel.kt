@@ -58,9 +58,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val categories: StateFlow<List<String>> = combine(_state, customCategories) { s, c -> Calc.categoryNames(s, c) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Calc.DEFAULT_CATEGORIES)
 
+    /** The month the home screen is about. Refreshed whenever the app comes to the front, so it rolls over at month end. */
+    private val currentMonth = MutableStateFlow(YearMonth.now())
+
     /** Totals for the current month, worked out on the phone. */
-    val summary: StateFlow<MonthSummary> = combine(_state, entries, customCategories) { s, e, c ->
-        Calc.summarize(s, e, c, YearMonth.now())
+    val summary: StateFlow<MonthSummary> = combine(_state, entries, customCategories, currentMonth) { s, e, c, m ->
+        Calc.summarize(s, e, c, m)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Calc.summarize(loadState(), emptyList(), emptyList(), YearMonth.now()))
     private val _status = MutableStateFlow(prefs.lastSyncMessage)
     val status = _status.asStateFlow()
@@ -92,11 +95,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         prefs.cachedState?.let { runCatching { ServerState.fromJson(it) }.getOrNull() }
 
     fun onOpen() {
+        currentMonth.value = YearMonth.now()
         SyncScheduler.ensurePeriodic(getApplication())
         viewModelScope.launch {
             runCatching { SmsInboxScanner.scan(getApplication()) }
-            sync()
-            checkForUpdate()
+            syncNow()
+            checkForUpdateNow()
         }
     }
 
@@ -107,9 +111,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Asks the laptop whether it has a newer build of this app. */
     fun checkForUpdate() {
-        viewModelScope.launch {
-            _checkingUpdate.value = true
+        viewModelScope.launch { checkForUpdateNow() }
+    }
+
+    private suspend fun checkForUpdateNow() {
+        _checkingUpdate.value = true
+        try {
             _update.value = Updater.check(getApplication())
+        } finally {
             _checkingUpdate.value = false
         }
     }
@@ -123,14 +132,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Runs in the background; use [syncNow] when the caller needs the result. */
     fun sync() {
-        viewModelScope.launch {
-            _syncing.value = true
+        viewModelScope.launch { syncNow() }
+    }
+
+    /** Several syncs can be requested at once (open, save, button); the spinner stays on until the last one finishes. */
+    private var activeSyncs = 0
+
+    private suspend fun syncNow() {
+        activeSyncs++
+        _syncing.value = true
+        try {
             Syncer.run(getApplication())
             _state.value = loadState()
             _status.value = prefs.lastSyncMessage
             _lastSyncMs.value = prefs.lastSyncMs
-            _syncing.value = false
+        } finally {
+            if (--activeSyncs == 0) _syncing.value = false
         }
     }
 
@@ -145,8 +164,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val what = if (category == INCOME) "Income" else "Expense"
             _messages.tryEmit("$what saved, syncing…")
             SyncScheduler.enqueueNow(getApplication())
-            sync()
-            _messages.tryEmit(if (expenses.value.any { !it.synced }) "$what saved, waiting to sync" else "$what saved and synced")
+            syncNow()
+            // Ask the database, not a cached list that may not have caught up yet.
+            _messages.tryEmit(if (db.expenseDao().unsynced().isEmpty()) "$what saved and synced" else "$what saved, waiting to sync")
         }
     }
 
@@ -161,7 +181,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             db.customCategoryDao().insert(CustomCategory(name, planned.coerceAtLeast(0.0)))
             _messages.tryEmit("Category \"$name\" added")
             SyncScheduler.enqueueNow(getApplication())
-            sync()
+            syncNow()
         }
         return null
     }
@@ -187,7 +207,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             db.pendingSmsDao().setStatus(p.key, PendingSms.CONFIRMED)
             _messages.tryEmit("Expense confirmed")
             SyncScheduler.enqueueNow(getApplication())
-            sync()
+            syncNow()
         }
     }
 

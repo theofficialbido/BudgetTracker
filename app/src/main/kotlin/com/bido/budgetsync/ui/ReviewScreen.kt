@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.bido.budgetsync.MainViewModel
+import com.bido.budgetsync.data.Amounts
 import com.bido.budgetsync.data.PendingSms
 import java.text.DateFormat
 import java.util.Date
@@ -75,10 +76,11 @@ private fun PendingCard(
     onConfirm: (Double, String, String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var amount by remember(p.key) { mutableStateOf(p.amount.toString().removeSuffix(".0")) }
+    var amount by remember(p.key) { mutableStateOf(java.math.BigDecimal.valueOf(p.amount).stripTrailingZeros().toPlainString()) }
     var description by remember(p.key) { mutableStateOf(p.merchant) }
-    var category by remember(p.key) { mutableStateOf(categories.lastOrNull() ?: "Other") }
-    val value = amount.replace(',', '.').toDoubleOrNull()
+    // Bank messages are mostly unplanned spending, so start on "Other" rather than whatever category was added last.
+    var category by remember(p.key) { mutableStateOf(categories.firstOrNull { it == "Other" } ?: categories.firstOrNull() ?: "Other") }
+    val value = Amounts.parse(amount)
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -86,7 +88,7 @@ private fun PendingCard(
                 "From ${p.sender}, " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(p.receivedAt)),
             )
             OutlinedTextField(
-                value = amount, onValueChange = { amount = it }, label = { Text("Amount (EGP)") },
+                value = amount, onValueChange = { amount = Amounts.clean(it) }, label = { Text("Amount (EGP)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )

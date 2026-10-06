@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.bido.budgetsync.MainViewModel
+import com.bido.budgetsync.data.Amounts
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -52,7 +53,7 @@ fun AddCategoryDialog(onAdd: (name: String, planned: Double) -> String?, onDismi
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
-                    value = planned, onValueChange = { planned = it.filter { c -> c.isDigit() || c == '.' } },
+                    value = planned, onValueChange = { planned = Amounts.clean(it) },
                     label = { Text("Monthly plan in EGP (optional)") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
@@ -65,7 +66,7 @@ fun AddCategoryDialog(onAdd: (name: String, planned: Double) -> String?, onDismi
         },
         confirmButton = {
             TextButton(onClick = {
-                val result = onAdd(name, planned.toDoubleOrNull() ?: 0.0)
+                val result = onAdd(name, Amounts.parse(planned) ?: 0.0)
                 if (result == null) onDismiss() else error = result
             }) { Text("Add") }
         },

@@ -58,6 +58,16 @@ class SmsParserTest {
         assertNull(SmsParser.parse("Refund of EGP 300 received"))
     }
 
+    @Test fun creditNoticeMentioningAPurchaseLimitIsRejected() {
+        assertNull(SmsParser.parse("Your account was credited with EGP 5,000. Daily purchase limit EGP 10,000"))
+        assertNull(SmsParser.parse("تم إيداع 2000 جنيه. الحد اليومي للشراء 10000 جنيه"))
+    }
+
+    @Test fun debitStillAcceptedWhenTheTextAlsoMentionsCredit() {
+        // a transfer: money leaves this account and is credited to someone else
+        assertEquals(500.0, ok("EGP 500 debited from your account and credited to Ahmed").amount, 0.001)
+    }
+
     @Test fun noAmountOrNoSpendingWordRejected() {
         assertNull(SmsParser.parse("Purchase approved at Carrefour"))
         assertNull(SmsParser.parse("Your balance is EGP 500"))

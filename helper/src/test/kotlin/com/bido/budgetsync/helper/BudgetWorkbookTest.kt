@@ -137,6 +137,17 @@ class BudgetWorkbookTest {
     }
 
     @Test
+    fun retryIsNotMistakenForAnotherDaysEntryWithTheSameAmount() {
+        fixture()   // row 2 is today's 175. Pretend the ledger reserved that row for a different entry (yesterday, also 175).
+        ledger.putAll(mapOf("y1" to Slot("Log", 2)))
+        val yesterday = NewExpense("y1", today.minusDays(1), "Going out", "Taxi", 175.0)
+        val r = book.append(listOf(yesterday), ledger)
+        assertEquals("added", r.single().status)         // not "already": the date differs, so row 2 is not this entry
+        assertEquals(3, r.single().row)
+        assertEquals(2, book.readState().log.size)               // the original row plus the new one
+    }
+
+    @Test
     fun sameAmountDifferentCategoryIsNotATwin() {
         fixture()
         assertEquals("added", book.append(listOf(expense("p1", "Breakfast", "Foul", 175.0)), ledger).single().status)

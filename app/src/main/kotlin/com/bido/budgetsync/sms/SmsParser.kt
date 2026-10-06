@@ -20,6 +20,8 @@ object SmsParser {
         RegexOption.IGNORE_CASE,
     )
     private val spendAr = listOf("خصم", "شراء", "سحب", "دفع", "مدفوعات", "عملية")
+    private val debitEn = Regex("""\b(debited|paid|spent|withdrawn|withdrawal|charged)\b""", RegexOption.IGNORE_CASE)
+    private val debitAr = listOf("خصم", "سحب", "دفع")
     private val incomingEn = Regex("""\b(credited|received|deposit|deposited|refund|refunded|reversal|reversed|salary|cashback)\b""", RegexOption.IGNORE_CASE)
     private val incomingAr = listOf("إيداع", "ايداع", "أودع", "استلام", "استلمت", "استرداد", "راتب", "إضافة", "اضافة", "وارد")
 
@@ -32,8 +34,12 @@ object SmsParser {
         val text = normalize(body)
         if (otpEn.containsMatchIn(text) || otpAr.any { it in text }) return null
         val spending = spendEn.containsMatchIn(text) || spendAr.any { it in text }
+        if (!spending) return null
+        // A credit notice can mention a purchase or payment limit, so a message that also talks about money coming in
+        // only counts if it clearly says money went out.
         val incoming = incomingEn.containsMatchIn(text) || incomingAr.any { it in text }
-        if (!spending || (incoming && !spending)) return null
+        val clearlyOut = debitEn.containsMatchIn(text) || debitAr.any { it in text }
+        if (incoming && !clearlyOut) return null
         val amount = findAmount(text) ?: return null
         return ParsedSms(amount, findMerchant(text))
     }

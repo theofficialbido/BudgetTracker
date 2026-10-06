@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.bido.budgetsync.MainViewModel
+import com.bido.budgetsync.data.Amounts
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -66,7 +67,7 @@ fun AddExpenseScreen(
     var date by remember { mutableStateOf(LocalDate.now()) }
     var picking by remember { mutableStateOf(false) }
     var addingCategory by remember { mutableStateOf(false) }
-    val value = amount.replace(',', '.').toDoubleOrNull()
+    val value = Amounts.parse(amount)
     val effectiveCategory = if (income) MainViewModel.INCOME else category
     val accent = accentFor(effectiveCategory)
     val suggestions = vm.suggestions(effectiveCategory).filter { !it.equals(description.trim(), ignoreCase = true) }
@@ -94,7 +95,7 @@ fun AddExpenseScreen(
             }
 
             OutlinedTextField(
-                value = amount, onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                value = amount, onValueChange = { amount = Amounts.clean(it) },
                 label = { Text("Amount") }, prefix = { Text("EGP ") },
                 textStyle = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold, color = accent),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,

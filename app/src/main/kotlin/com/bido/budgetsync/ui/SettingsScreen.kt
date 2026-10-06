@@ -37,6 +37,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import com.bido.budgetsync.MainViewModel
 import com.bido.budgetsync.data.UpdateCheck
@@ -49,6 +53,14 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val savedHost by vm.host.collectAsState()
     val savedToken by vm.token.collectAsState()
+    // Re-read the "install unknown apps" permission when coming back from Android's settings screen.
+    var canInstall by remember { mutableStateOf(Updater.canInstall(ctx)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) canInstall = Updater.canInstall(ctx) }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val update by vm.update.collectAsState()
     val checking by vm.checkingUpdate.collectAsState()
     val autoDiscover by vm.autoDiscover.collectAsState()
@@ -115,9 +127,9 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                 OutlinedButton(onClick = { vm.checkForUpdate() }, enabled = !checking) { Text(if (checking) "Working…" else "Check for update") }
                 if (update is UpdateCheck.Available) {
                     Button(
-                        onClick = { if (Updater.canInstall(ctx)) vm.installUpdate() else Updater.openInstallPermissionSettings(ctx) },
+                        onClick = { if (canInstall) vm.installUpdate() else Updater.openInstallPermissionSettings(ctx) },
                         enabled = !checking,
-                    ) { Text(if (Updater.canInstall(ctx)) "Download and install" else "Allow installs, then tap again") }
+                    ) { Text(if (canInstall) "Download and install" else "Allow installs, then tap again") }
                 }
             }
 

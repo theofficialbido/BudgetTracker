@@ -404,8 +404,10 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
 
     private fun matches(sheet: Sheet, l: Layout, row1: Int, e: NewExpense): Boolean {
         val amount = sheet.cell(row1, l.amountCol)?.takeIf { it.cellType == CellType.NUMERIC }?.numericCellValue ?: return false
-        // Description is not compared: a claimed row keeps whatever wording the other side used.
-        return Math.abs(amount - e.amount) < 0.001
+        val date = sheet.cell(row1, 0)?.takeIf { it.cellType == CellType.NUMERIC }?.numericCellValue ?: return false
+        // Date and amount identify the entry. Description and category are not compared: a claimed row keeps whatever
+        // wording the other side used, and an unknown category was filed under "Other" when it was written.
+        return Math.floor(date).toLong() == e.date.toEpochDay() + 25569 && Math.abs(amount - e.amount) < 0.001
     }
 
     private fun findUnclaimedTwin(sheet: Sheet, l: Layout, e: NewExpense, isIncome: Boolean, taken: Set<Int>): Int? {
