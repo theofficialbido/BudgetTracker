@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.6
+
+### Changed
+- **Left to spend is now a running balance worked out entirely in the app:** all income declared in the app minus all spending declared in the app, counted from the last month you chose to start at 0. It needs no connection; the laptop only keeps a copy for redundancy and for the briefs.
+- **Month-end decision.** When a month ends with money left, Home asks: carry it into the new month, or invest / treat yourself and start the new month at 0 (a slider splits the leftover between investing and treating yourself). An overspent month asks whether to carry the shortfall or start at 0. Until you decide, the money carries over. The decision is kept on the phone and copied to a new "Month closing" sheet.
+- The daily allowance is now what is left to spend divided by the days left, not the unused part of the plan.
+- The widget says "left to spend" and shows the same running balance.
+
+### Added
+- **Plans are edited in the app** (open a category, Change plan). They apply at once, drive progress and alerts, and are copied to the workbook on the next sync: for the Tracker categories into the Plan sheet's unit cost (keeping times per month), for your own categories into the More categories sheet.
+- **Tracker row "Left to spend (running balance)"** (Tracker!A14:C14) in the workbook, calculated the same way, so the morning and evening briefs can quote the same number as the app. The balance start date is kept in 'Month closing'!I2.
+
+### Fixed
+- Two workbook backups taken in the same second no longer collide on their file name.
+
+## 1.5
+
+### Added
+- **Edit and delete saved entries.** Tap any entry to change its amount, description, category or date, or delete it. Entries still waiting to sync change on the phone; entries already in Budget.xlsx are changed there through the laptop. The helper refuses a change if the row was edited in Excel meanwhile (the phone sends what it saw), deleting twice is harmless, and the Tracker numbers follow.
+- **Quick add.** Entries you repeat (same category, description and amount, at least twice in 90 days) appear as one-tap chips on Home and as "Your usual ones" on the Add screen. A quick add is held for six seconds so Undo can take it back before it is sent.
+- **Home-screen widget and launcher shortcuts.** The widget shows what is left after spending (worked out on the phone) with + Expense and + Income buttons. Long-press the app icon for the same shortcuts.
+- **Daily allowance and month-end forecast.** "About X EGP a day is safe" from what is left of the plan and the days remaining, and "at this pace you'll spend Y of Z", plus categories heading over their plan before they get there. A single big entry, like a subscription, is treated as a one-off, not a daily habit.
+- **Alerts and reminders** (Settings, both off by default): a notification when a category reaches WATCH or OVER (once per step up), and a 9pm reminder if nothing was logged today. They work without the laptop.
+- **History and trends.** A six-month bar chart of spending with income marks, the chosen month compared with the one before, and a category breakdown that opens each category for that month.
+- **Automatic daily backups** of Budget.xlsx to `%LOCALAPPDATA%\BudgetSync\backups\daily` (outside OneDrive), taken when the workbook has changed since the last one; the newest 30 are kept.
+
+### Fixed
+- **Dates were one day early on any time zone east of UTC** (Cairo included): the helper turned Excel dates into days through UTC. Dates now come straight from Excel's serial number. This could put entries on the wrong day, and around month ends in the wrong month.
+- A backup is dated when it was made, not when the workbook was last edited.
+
 ## 1.4
 
 ### Changed

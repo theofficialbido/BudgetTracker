@@ -22,6 +22,24 @@ data class Expense(
     @ColumnInfo(defaultValue = "0") val inCache: Boolean = false,
 )
 
+/** What you chose when a month ended: [reset] true means "invest or treat myself and start the next month at 0". */
+@Entity(tableName = "month_closings")
+data class MonthClosing(
+    @PrimaryKey val month: String,     // yyyy-MM
+    val reset: Boolean,
+    val invested: Double,
+    val splurged: Double,
+    val synced: Boolean = false,
+)
+
+/** A monthly plan set in the app for one category. It wins over what was last read from the workbook. */
+@Entity(tableName = "plans")
+data class PlanOverride(
+    @PrimaryKey val name: String,
+    val planned: Double,
+    val synced: Boolean = false,
+)
+
 /** A category the user added on the phone. It is sent to the laptop, which keeps it on the "More categories" sheet. */
 @Entity(tableName = "custom_categories")
 data class CustomCategory(

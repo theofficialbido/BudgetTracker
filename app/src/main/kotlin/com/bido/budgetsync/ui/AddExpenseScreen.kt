@@ -35,6 +35,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,6 +92,25 @@ fun AddExpenseScreen(
                         onClick = { income = isIncome },
                         shape = SegmentedButtonDefaults.itemShape(i, 2),
                     ) { Text(label) }
+                }
+            }
+
+            val templates by (if (income) vm.incomeTemplates else vm.expenseTemplates).collectAsState()
+            if (templates.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Your usual ones", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        templates.forEach { t ->
+                            AssistChip(
+                                onClick = {
+                                    amount = java.math.BigDecimal.valueOf(t.amount).stripTrailingZeros().toPlainString()
+                                    description = t.description
+                                    if (!income) category = t.category
+                                },
+                                label = { Text(t.label) },
+                            )
+                        }
+                    }
                 }
             }
 

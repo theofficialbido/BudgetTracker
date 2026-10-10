@@ -21,6 +21,13 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 class BusyException(message: String) : Exception(message)
+
+/** The row is no longer the entry the phone is looking at (it was changed, moved or removed in Excel). */
+class ConflictException(message: String) : Exception(message)
+
+/** Points at one entry in the workbook, with what the phone saw there so a changed row is never overwritten by mistake. */
+data class EntryRef(val sheet: String, val row: Int, val expectDate: String?, val expectAmount: Double?)
+data class EntryChange(val ref: EntryRef, val date: LocalDate, val category: String, val description: String, val amount: Double)
 class FullException(sheet: String, last: Int = 1000) : Exception("The $sheet sheet is full (rows 2 to $last). Archive old rows in Budget.xlsx.")
 
 data class NewExpense(val id: String, val date: LocalDate, val category: String, val description: String, val amount: Double)
@@ -42,7 +49,10 @@ data class State(
     val extras: List<TrackerRow>,  // categories added from the phone, kept on the "More categories" sheet
     val watchAt: Double,           // Plan!B25, alert level for WATCH (0.8 = 80%)
     val overAt: Double,            // Plan!B26, alert level for OVER
+    val closings: List<ClosingRow>,   // what was chosen at each month end (kept so a reinstalled phone remembers)
 )
+data class ClosingRow(val month: String, val reset: Boolean, val invested: Double, val splurged: Double)
+data class PlanChange(val name: String, val planned: Double)
 data class NewCategory(val name: String, val planned: Double)
 data class CategoryResult(val name: String, val status: String)
 data class UpgradeReport(val alreadyUpgraded: Boolean, val movedRows: Int, val backup: Path?)
@@ -55,6 +65,9 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
         const val INCOME = "Income"          // category the phone uses for income entries
         const val LOG = "Log"
         const val INCOME_SHEET = "Income"
+        const val RUNNING_LABEL = "Left to spend (running balance)"
+        const val CLOSING_SHEET = "Month closing"   // what was chosen at each month end: carry over, or invest / treat and start at 0
+        private const val CLOSING_ROWS = 600
         const val EXTRA_SHEET = "More categories"   // categories added from the phone: name, planned, then live actual/status
         const val EXTRA_FIRST = 2
         const val EXTRA_LAST = 51                    // room for 50 extra categories
@@ -87,6 +100,7 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
                 month = month,
                 categories = rows.map { it.category } + extras.map { it.category },
                 extras = extras,
+                closings = wb.getSheet(CLOSING_SHEET)?.let { readClosings(it) } ?: emptyList(),
                 watchAt = plan?.cell(25, 1)?.let { num(it, ev) }?.takeIf { it > 0 } ?: 0.8,
                 overAt = plan?.cell(26, 1)?.let { num(it, ev) }?.takeIf { it > 0 } ?: 1.0,
                 log = readLog(log),
@@ -183,9 +197,11 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
             val planD7 = plan?.cell(7, 3)
             val planLinked = plan == null || planD7 == null || (planD7.cellType == CellType.FORMULA && planD7.cellFormula.contains("Income!"))
             val extrasLinked = wb.getSheet(EXTRA_SHEET) != null && extrasAreLinked(wb)
-            if (existed && linked && planLinked && extrasLinked && moves.isEmpty()) return UpgradeReport(true, 0, null)
+            val balanceThere = wb.getSheet(CLOSING_SHEET) != null && str(tracker.cell(14, 0)) == RUNNING_LABEL
+            if (existed && linked && planLinked && extrasLinked && balanceThere && moves.isEmpty()) return UpgradeReport(true, 0, null)
             val backup = backup()
             if (!extrasLinked) { ensureExtraSheet(wb, log); linkExtras(wb) }
+            if (!balanceThere) ensureRunningBalance(wb, log)
             if (!linked) {
                 c11.cellFormula = INCOME_FORMULA
                 setText(tracker, 11, 0, "Income received this month")
@@ -230,11 +246,65 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
         setText(plan, 30, 0, "Income is not a plan: it follows what you log on the phone (Income sheet). Rows whose source contains 'job' or 'salary' show as Job income, everything else as Allowance and other. The leftover and its split show 0 until income is logged this month.")
     }
 
+    /** Rewrites one existing entry (Log or Income). The row must still hold what the phone saw there. */
+    @Synchronized
+    fun updateEntry(change: EntryChange): String {
+        mutateRow(change.ref, allowGone = false) { wb, sheet, _, isIncome ->
+            val e = NewExpense("", change.date, change.category, change.description, change.amount)
+            if (isIncome) writeIncome(sheet, change.ref.row, e.copy(category = INCOME)) else {
+                require(!change.category.equals(INCOME, ignoreCase = true)) { "Income entries are edited on the Income sheet" }
+                val category = categoryNames(wb).firstOrNull { it.equals(change.category, ignoreCase = true) }
+                    ?: throw IllegalArgumentException("unknown category")
+                writeLog(sheet, change.ref.row, e.copy(category = category))
+            }
+        }
+        return "updated"
+    }
+
+    /** Clears one entry's cells (the row stays, empty, and is reused by the next entry). Deleting twice is fine. */
+    @Synchronized
+    fun deleteEntry(ref: EntryRef, ledger: SyncLedger): String {
+        val removed = mutateRow(ref, allowGone = true) { _, sheet, layout, _ ->
+            (0 until layout.columns).forEach { sheet.cell(ref.row, it)?.setBlank() }
+        }
+        ledger.removeSlot(Slot(ref.sheet, ref.row))
+        return if (removed) "deleted" else "gone"
+    }
+
+    /** Shared safety for changing or removing one row. Returns false if the row was already empty and [allowGone] is set. */
+    private fun mutateRow(ref: EntryRef, allowGone: Boolean, change: (Workbook, Sheet, Layout, Boolean) -> Unit): Boolean {
+        if (Files.exists(lockFile)) throw BusyException("Budget.xlsx is open in Excel")
+        require(ref.sheet == LOG || ref.sheet == INCOME_SHEET) { "unknown sheet" }
+        require(ref.row in FIRST_ROW..LAST_ROW) { "row out of range" }
+        val before = mtime()
+        open().use { wb ->
+            val isIncome = ref.sheet == INCOME_SHEET
+            val sheet = wb.getSheet(ref.sheet) ?: throw ConflictException("The ${ref.sheet} sheet is missing")
+            val layout = if (isIncome) incomeLayout else logLayout
+            if (isEmpty(sheet, layout, ref.row)) {
+                if (allowGone) return false
+                throw ConflictException("That entry is no longer in the workbook. Refresh and try again.")
+            }
+            val date = dateOf(sheet.cell(ref.row, 0))
+            val amount = sheet.cell(ref.row, layout.amountCol)?.takeIf { it.cellType == CellType.NUMERIC }?.numericCellValue
+            if ((ref.expectDate != null && ref.expectDate != date) ||
+                (ref.expectAmount != null && (amount == null || Math.abs(amount - ref.expectAmount) > 0.001))
+            ) throw ConflictException("That entry changed in Excel. Refresh and try again.")
+            change(wb, sheet, layout, isIncome)
+            finish(wb, before)
+            return true
+        }
+    }
+
+    private fun categoryNames(wb: Workbook): List<String> =
+        (wb.getSheet("Tracker")?.let { t -> (5..8).map { str(t.cell(it, 0)) }.filter { c -> c.isNotBlank() } } ?: emptyList()) +
+            (wb.getSheet(EXTRA_SHEET)?.let { extraNames(it) } ?: emptyList())
+
     private fun backup(): Path {
         val dir = dataDir.resolve("backups")
         Files.createDirectories(dir)
-        val stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
-        return Files.copy(path, dir.resolve("Budget-before-upgrade-$stamp.xlsx"))
+        val stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS"))
+        return Files.copy(path, dir.resolve("Budget-before-upgrade-$stamp.xlsx"), StandardCopyOption.REPLACE_EXISTING)
     }
 
     /** Adds categories created on the phone to the "More categories" sheet. Existing names (any case) are left alone. */
@@ -268,6 +338,156 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
             if (!wrote && ready) return results
             if (!ready) { backup(); linkExtras(wb) }
             finish(wb, before)
+            return results
+        }
+    }
+
+    // ---- month closing ----------------------------------------------------------------------------------------------
+
+    /**
+     * Records what was decided when a month ended: carry the leftover on, or invest / treat yourself with it and start the
+     * next month at 0. One row per month (a second decision for the same month replaces the first).
+     */
+    @Synchronized
+    fun setClosings(items: List<ClosingRow>): List<CategoryResult> {
+        if (Files.exists(lockFile)) throw BusyException("Budget.xlsx is open in Excel")
+        val before = mtime()
+        open().use { wb ->
+            val log = wb.getSheet(LOG) ?: error("Sheet 'Log' not found")
+            val sheet = ensureClosingSheet(wb, log)
+            val results = ArrayList<CategoryResult>()
+            for (item in items) {
+                require(Regex("""\d{4}-(0[1-9]|1[0-2])""").matches(item.month)) { "month must look like 2026-09" }
+                require(item.invested.isFinite() && item.invested >= 0 && item.splurged.isFinite() && item.splurged >= 0) { "amounts must be 0 or more" }
+                val existing = (2..CLOSING_ROWS).firstOrNull { str(sheet.cell(it, 0)).trim() == item.month }
+                val row = existing ?: (2..CLOSING_ROWS).firstOrNull { str(sheet.cell(it, 0)).isBlank() } ?: throw FullException(CLOSING_SHEET, CLOSING_ROWS)
+                val r = sheet.getRow(row - 1) ?: sheet.createRow(row - 1)
+                fun put(col: Int, v: String) = (r.getCell(col) ?: r.createCell(col)).setCellValue(v)
+                fun put(col: Int, v: Double) = (r.getCell(col) ?: r.createCell(col)).setCellValue(v)
+                put(0, item.month)
+                put(1, if (item.reset) "Started at 0" else "Carried over")
+                put(2, item.invested)
+                put(3, item.splurged)
+                put(5, LocalDate.now().toString())
+                results += CategoryResult(item.month, if (existing != null) "updated" else "added")
+            }
+            ensureRunningBalance(wb, log)
+            finish(wb, before)
+            return results
+        }
+    }
+
+    /**
+     * Tracker!A14:C14 shows "Left to spend (running balance)": all income logged minus all spending logged, counted from
+     * the first day after the latest month that was closed with "start at 0" ('Month closing'!I2). It is the same number
+     * the phone shows, so the morning and evening briefs can quote it. Idempotent.
+     */
+    private fun ensureRunningBalance(wb: Workbook, log: Sheet) {
+        val tracker = wb.getSheet("Tracker") ?: return
+        val closing = ensureClosingSheet(wb, log)
+        ensureIncomeSheet(wb, log)
+
+        // where the balance is counted from: the day after the latest "Started at 0" month, or from the beginning
+        val start = (2..CLOSING_ROWS).filter { str(closing.cell(it, 1)).startsWith("Started") }
+            .mapNotNull { runCatching { java.time.YearMonth.parse(str(closing.cell(it, 0)).trim()) }.getOrNull() }
+            .maxOrNull()?.plusMonths(1)?.atDay(1)
+        val row = closing.getRow(1) ?: closing.createRow(1)
+        (closing.getRow(0) ?: closing.createRow(0)).let { r ->
+            (r.getCell(8) ?: r.createCell(8)).setCellValue("Balance counted from")
+        }
+        val cell = row.getCell(8) ?: row.createCell(8)
+        if (start != null) cell.setCellValue(start.toEpochDay() + 25569.0) else cell.setCellValue(0.0)
+        cell.cellStyle = wb.createCellStyle().apply { dataFormat = wb.creationHelper.createDataFormat().getFormat("yyyy-mm-dd") }
+        closing.setColumnWidth(8, 20 * 256)
+
+        val from = "'$CLOSING_SHEET'!\$I\$2"
+        val to = "EDATE(\$B\$2,1)"
+        val formula = "SUMIFS(Income!\$C\$2:\$C\$1000,Income!\$A\$2:\$A\$1000,\">=\"&$from,Income!\$A\$2:\$A\$1000,\"<\"&$to)" +
+            "-SUMIFS(Log!\$D\$2:\$D\$1000,Log!\$A\$2:\$A\$1000,\">=\"&$from,Log!\$A\$2:\$A\$1000,\"<\"&$to)"
+        val tr = tracker.getRow(13) ?: tracker.createRow(13)
+        val label = tr.getCell(0) ?: tr.createCell(0).also { c -> tracker.cell(12, 0)?.cellStyle?.let { c.cellStyle = it } }
+        label.setCellValue(RUNNING_LABEL)
+        val value = tr.getCell(2) ?: tr.createCell(2).also { c -> tracker.cell(12, 2)?.cellStyle?.let { c.cellStyle = it } }
+        value.cellFormula = formula
+    }
+
+    private fun readClosings(sheet: Sheet): List<ClosingRow> = (2..CLOSING_ROWS).mapNotNull { r ->
+        val month = str(sheet.cell(r, 0)).trim()
+        if (month.isEmpty()) null
+        else ClosingRow(
+            month, str(sheet.cell(r, 1)).startsWith("Started"),
+            num(sheet.cell(r, 2)), num(sheet.cell(r, 3)),
+        )
+    }
+
+    private fun ensureClosingSheet(wb: Workbook, log: Sheet): Sheet {
+        wb.getSheet(CLOSING_SHEET)?.let { return it }
+        val sheet = wb.createSheet(CLOSING_SHEET)
+        fun styleOf(r: Int, c: Int) = log.getRow(r)?.getCell(c)?.cellStyle
+        sheet.createRow(0).apply {
+            listOf("Month", "What I chose", "Invested", "Treated myself", "", "Decided on").forEachIndexed { i, h ->
+                if (h.isNotEmpty()) createCell(i).apply { setCellValue(h); styleOf(0, 0)?.let { cellStyle = it } }
+            }
+            createCell(7).apply { setCellValue("How to use"); styleOf(0, 5)?.let { cellStyle = it } }
+        }
+        sheet.createRow(1).createCell(7).apply {
+            setCellValue("When a month ends with money left, the Budget Tracker app asks whether to carry it over or invest / treat yourself and start at 0. The choice is recorded here.")
+            styleOf(1, 5)?.let { cellStyle = it }
+        }
+        listOf(0 to 12, 1 to 18, 2 to 14, 3 to 16, 5 to 14, 7 to 70).forEach { (c, w) -> sheet.setColumnWidth(c, w * 256) }
+        sheet.createFreezePane(0, 1)
+        return sheet
+    }
+
+    // ---- plans ------------------------------------------------------------------------------------------------------
+
+    /**
+     * Sets the monthly plan for categories from the phone. For the four Tracker categories the plan is written where the
+     * Tracker takes it from: a Plan row's unit cost (keeping its "times per month"), or the Tracker cell if it is a plain
+     * number. Categories on the "More categories" sheet get their Planned cell set.
+     */
+    @Synchronized
+    fun setPlans(items: List<PlanChange>): List<CategoryResult> {
+        if (Files.exists(lockFile)) throw BusyException("Budget.xlsx is open in Excel")
+        val before = mtime()
+        open().use { wb ->
+            val tracker = wb.getSheet("Tracker") ?: error("Sheet 'Tracker' not found")
+            val plan = wb.getSheet("Plan")
+            val extra = wb.getSheet(EXTRA_SHEET)
+            val results = ArrayList<CategoryResult>()
+            var changed = false
+            for (item in items) {
+                require(item.planned.isFinite() && item.planned >= 0) { "planned amount must be 0 or more" }
+                val name = item.name.trim()
+                val trackerRow = (5..8).firstOrNull { str(tracker.cell(it, 0)).trim().equals(name, ignoreCase = true) }
+                val extraRow = extra?.let { s -> (EXTRA_FIRST..EXTRA_LAST).firstOrNull { str(s.cell(it, 0)).trim().equals(name, ignoreCase = true) } }
+                val status = when {
+                    trackerRow != null -> {
+                        val cell = tracker.cell(trackerRow, 1)
+                        val planRow = cell?.takeIf { it.cellType == CellType.FORMULA }
+                            ?.let { Regex("""Plan!\$?D\$?(\d+)""").find(it.cellFormula)?.groupValues?.get(1)?.toIntOrNull() }
+                        when {
+                            planRow != null && plan != null -> {
+                                val times = plan.cell(planRow, 2)?.takeIf { it.cellType == CellType.NUMERIC }?.numericCellValue ?: 0.0
+                                if (times > 0) {
+                                    plan.cell(planRow, 1)?.setCellValue(item.planned / times)
+                                } else {
+                                    plan.cell(planRow, 1)?.setCellValue(item.planned)
+                                    plan.cell(planRow, 2)?.setCellValue(1.0)
+                                }
+                                "updated"
+                            }
+                            cell != null && cell.cellType != CellType.FORMULA -> { cell.setCellValue(item.planned); "updated" }
+                            else -> "unsupported"
+                        }
+                    }
+                    extraRow != null && extra != null -> { extra.cell(extraRow, 1)?.setCellValue(item.planned); "updated" }
+                    else -> "unknown"
+                }
+                if (status == "updated") changed = true
+                results += CategoryResult(name, status)
+            }
+            if (changed) { backup(); finish(wb, before) }
             return results
         }
     }
@@ -441,8 +661,12 @@ class BudgetWorkbook(private val path: Path, private val dataDir: Path) {
         cellAt(sheet, row1, 2, t).setCellValue(e.amount)
     }
 
+    /**
+     * The calendar day of an Excel date cell, straight from its serial number (25569 is 1970-01-01). No time zone is involved:
+     * going through java.util.Date moves the day back by one in any zone east of UTC, such as Cairo.
+     */
     private fun dateOf(c: Cell?): String? = c?.takeIf { it.cellType == CellType.NUMERIC && it.numericCellValue > 0 }
-        ?.let { DateUtil.getJavaDate(it.numericCellValue).toInstant().atZone(ZoneOffset.UTC).toLocalDate().toString() }
+        ?.let { LocalDate.ofEpochDay(Math.floor(it.numericCellValue).toLong() - 25569).toString() }
 
     private fun readLog(log: Sheet): List<LogRow> = (FIRST_ROW..LAST_ROW).mapNotNull { r ->
         if (isEmpty(log, logLayout, r)) return@mapNotNull null

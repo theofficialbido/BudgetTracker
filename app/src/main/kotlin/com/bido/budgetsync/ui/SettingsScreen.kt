@@ -43,6 +43,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import com.bido.budgetsync.MainViewModel
+import com.bido.budgetsync.data.Alerts
 import com.bido.budgetsync.data.UpdateCheck
 import com.bido.budgetsync.data.Updater
 import com.bido.budgetsync.sms.SmsInboxScanner
@@ -60,6 +61,22 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) canInstall = Updater.canInstall(ctx) }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val alertsCategory by vm.alertsCategory.collectAsState()
+    val alertsReminder by vm.alertsReminder.collectAsState()
+    var pendingAlert by remember { mutableStateOf<String?>(null) }
+    fun applyAlert(which: String, on: Boolean) {
+        if (which == "category") vm.setAlerts(category = on) else vm.setAlerts(reminder = on)
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) pendingAlert?.let { applyAlert(it, true) }
+        pendingAlert = null
+    }
+    fun toggleAlert(which: String, on: Boolean) {
+        when {
+            !on || Alerts.hasPermission(ctx) -> applyAlert(which, on)
+            else -> { pendingAlert = which; notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+        }
     }
     val update by vm.update.collectAsState()
     val checking by vm.checkingUpdate.collectAsState()
@@ -131,6 +148,21 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                         enabled = !checking,
                     ) { Text(if (canInstall) "Download and install" else "Allow installs, then tap again") }
                 }
+            }
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("Alerts and reminders", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Worked out on the phone, so they work without the laptop.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Tell me when a category reaches WATCH or OVER", Modifier.weight(1f))
+                Switch(checked = alertsCategory, onCheckedChange = { toggleAlert("category", it) })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Remind me at 9pm if I haven't logged anything", Modifier.weight(1f))
+                Switch(checked = alertsReminder, onCheckedChange = { toggleAlert("reminder", it) })
             }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))

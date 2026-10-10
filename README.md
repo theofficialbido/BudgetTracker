@@ -10,6 +10,14 @@ Phone app (Room DB, offline first)  --HTTP on home Wi-Fi-->  Laptop helper  --> 
 - `helper/`: laptop sync helper (Kotlin/JVM, Apache POI, JDK `HttpServer` on port 8765). Writes expenses to the Log sheet and income to the Income sheet, idempotently.
 - `9pm-checkin-prompt.txt`: prompt for a daily check-in routine that reads the same workbook.
 
+## What it does
+
+- Log expenses and income in a couple of taps, offline first; entries sync to the workbook when the laptop is reachable.
+- Totals, statuses, daily allowance and forecast are worked out on the phone, so the app is useful without the laptop.
+- Edit or delete any entry, add your own categories, see where each category's money went, and browse past months.
+- Quick-add chips, a home-screen widget, launcher shortcuts, optional alerts and a 9pm reminder.
+- The helper keeps daily backups of the workbook outside OneDrive and serves app updates to the phone.
+
 ## Build
 
 Needs JDK 17 and the Android SDK (platform 35). Set `sdk.dir` in `local.properties`.

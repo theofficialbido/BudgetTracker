@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="add_expense"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_add"
+        android:shortcutLongLabel="@string/shortcut_expense_long"
+        android:shortcutShortLabel="@string/shortcut_expense">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.bido.budgetsync.MainActivity"
+            android:targetPackage="com.bido.budgetsync">
+            <extra
+                android:name="open"
+                android:value="expense" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="add_income"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_add"
+        android:shortcutLongLabel="@string/shortcut_income_long"
+        android:shortcutShortLabel="@string/shortcut_income">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.bido.budgetsync.MainActivity"
+            android:targetPackage="com.bido.budgetsync">
+            <extra
+                android:name="open"
+                android:value="income" />
+        </intent>
+    </shortcut>
+</shortcuts>

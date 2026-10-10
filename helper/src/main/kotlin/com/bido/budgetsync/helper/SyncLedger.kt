@@ -36,6 +36,12 @@ class SyncLedger(private val file: Path) {
         save()
     }
 
+    /** The entry in this slot was deleted from the workbook. */
+    @Synchronized
+    fun removeSlot(slot: Slot) {
+        if (slots.values.removeAll { it == slot }) save()
+    }
+
     /** Used by the workbook upgrade when rows move between sheets. */
     @Synchronized
     fun relocate(moves: Map<Slot, Slot>) {

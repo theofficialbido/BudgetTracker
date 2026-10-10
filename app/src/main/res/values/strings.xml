@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_description">What is left to spend, with quick add buttons</string>
+    <string name="shortcut_expense">Add expense</string>
+    <string name="shortcut_expense_long">Add an expense</string>
+    <string name="shortcut_income">Add income</string>
+    <string name="shortcut_income_long">Add income</string>
+</resources>

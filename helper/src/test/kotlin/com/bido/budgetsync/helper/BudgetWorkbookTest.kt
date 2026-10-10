@@ -137,6 +137,184 @@ class BudgetWorkbookTest {
     }
 
     @Test
+    fun datesAreTheSameDayInEveryTimeZone() {
+        val saved = java.util.TimeZone.getDefault()
+        try {
+            for (zone in listOf("UTC", "Africa/Cairo", "Asia/Tokyo", "America/Los_Angeles", "Pacific/Kiritimati")) {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(zone))
+                fixture()
+                book.append(listOf(expense("z-$zone", "Breakfast", "Foul", 10.0)), SyncLedger(dir.resolve("ledger-${zone.replace('/', '_')}.json")))
+                val rows = book.readState().log
+                assertEquals(today.toString(), rows.first().date, "first row in $zone")
+                assertEquals(today.toString(), rows.last().date, "added row in $zone")
+            }
+        } finally {
+            java.util.TimeZone.setDefault(saved)
+        }
+    }
+
+    private fun ref(row: Int = 2, amount: Double? = 175.0, date: String? = today.toString(), sheet: String = "Log") =
+        EntryRef(sheet, row, date, amount)
+
+    @Test
+    fun monthClosingsAreRecordedAndReadBack() {
+        fixture()
+        assertEquals(0, book.readState().closings.size)
+        val r = book.setClosings(listOf(ClosingRow("2026-09", reset = true, invested = 300.0, splurged = 100.0)))
+        assertEquals("added", r.single().status)
+        book.setClosings(listOf(ClosingRow("2026-10", reset = false, invested = 0.0, splurged = 0.0)))
+        // a second decision for the same month replaces the first
+        assertEquals("updated", book.setClosings(listOf(ClosingRow("2026-09", reset = false, invested = 0.0, splurged = 0.0))).single().status)
+        val c = book.readState().closings
+        assertEquals(listOf("2026-09", "2026-10"), c.map { it.month })
+        assertEquals(listOf(false, false), c.map { it.reset })
+        book.setClosings(listOf(ClosingRow("2026-09", reset = true, invested = 250.0, splurged = 50.0)))
+        val again = book.readState().closings.first { it.month == "2026-09" }
+        assertEquals(true, again.reset)
+        assertEquals(250.0, again.invested)
+        assertEquals(50.0, again.splurged)
+        assertFailsWith<IllegalArgumentException> { book.setClosings(listOf(ClosingRow("September", false, 0.0, 0.0))) }
+        assertFailsWith<IllegalArgumentException> { book.setClosings(listOf(ClosingRow("2026-09", true, -1.0, 0.0))) }
+    }
+
+    private fun trackerBalance(): Double =
+        WorkbookFactory.create(java.io.ByteArrayInputStream(Files.readAllBytes(xlsx))).use { wb ->
+            wb.creationHelper.createFormulaEvaluator().evaluateAll()
+            assertEquals(BudgetWorkbook.RUNNING_LABEL, wb.getSheet("Tracker").getRow(13).getCell(0).stringCellValue)
+            wb.getSheet("Tracker").getRow(13).getCell(2).numericCellValue
+        }
+
+    @Test
+    fun runningBalanceRowMatchesWhatThePhoneShows() {
+        fixture()
+        val lastMonth = today.minusMonths(1)
+        book.append(
+            listOf(
+                NewExpense("a", today, "Income", "Salary", 1000.0),
+                NewExpense("b", lastMonth, "Income", "Salary", 500.0),
+                NewExpense("c", lastMonth, "Breakfast", "Foul", 100.0),
+            ),
+            ledger,
+        )
+        // nothing decided yet: everything counts. This month: 1000 in, 175 out. Last month: 500 in, 100 out.
+        book.setClosings(listOf(ClosingRow(java.time.YearMonth.from(lastMonth).toString(), reset = false, invested = 0.0, splurged = 0.0)))
+        assertEquals(1000.0 - 175.0 + 500.0 - 100.0, trackerBalance())
+        // last month closed "start at 0": only this month counts
+        book.setClosings(listOf(ClosingRow(java.time.YearMonth.from(lastMonth).toString(), reset = true, invested = 200.0, splurged = 200.0)))
+        assertEquals(1000.0 - 175.0, trackerBalance())
+        // the figures also still feed the existing monthly Tracker numbers untouched
+        assertEquals(175.0, book.readState().total.actual)
+    }
+
+    @Test
+    fun runningBalanceRowIsCreatedOnceAndLeavesTheTrackerAlone() {
+        fixture()
+        book.setClosings(listOf(ClosingRow("2025-01", reset = false, invested = 0.0, splurged = 0.0)))
+        book.setClosings(listOf(ClosingRow("2025-02", reset = false, invested = 0.0, splurged = 0.0)))
+        WorkbookFactory.create(java.io.ByteArrayInputStream(Files.readAllBytes(xlsx))).use { wb ->
+            val t = wb.getSheet("Tracker")
+            assertEquals(BudgetWorkbook.RUNNING_LABEL, t.getRow(13).getCell(0).stringCellValue)
+            assertEquals("Total", t.getRow(8).getCell(0).stringCellValue)             // existing rows untouched
+            assertEquals("SUM(C5:C8)", t.getRow(8).getCell(2).cellFormula)
+        }
+    }
+
+    @Test
+    fun planOnAPlainTrackerCellIsSetDirectly() {
+        fixture()
+        book.addCategories(listOf(NewCategory("Gym", 100.0)))
+        val r = book.setPlans(listOf(PlanChange("breakfast", 2500.0), PlanChange("Gym", 400.0), PlanChange("Nope", 5.0)))
+        assertEquals(listOf("updated", "updated", "unknown"), r.map { it.status })
+        val s = book.readState()
+        assertEquals(2500.0, s.tracker.first { it.category == "Breakfast" }.planned)
+        assertEquals(400.0, s.extras.single().planned)
+        assertFailsWith<IllegalArgumentException> { book.setPlans(listOf(PlanChange("Gym", -1.0))) }
+    }
+
+    @Test
+    fun planFedFromThePlanSheetKeepsItsTimesPerMonth() {
+        fixture()
+        // like the real workbook: Tracker B5 takes its plan from Plan!D10 = unit cost (B10) x times a month (C10)
+        WorkbookFactory.create(java.io.ByteArrayInputStream(Files.readAllBytes(xlsx))).use { wb ->
+            wb.getSheet("Tracker").getRow(4).getCell(1).cellFormula = "Plan!D10"
+            wb.getSheet("Plan").getRow(9).getCell(2).setCellValue(4.0)
+            Files.newOutputStream(xlsx).use { wb.write(it) }
+        }
+        assertEquals("updated", book.setPlans(listOf(PlanChange("Claude subscription", 600.0))).single().status)
+        WorkbookFactory.create(java.io.ByteArrayInputStream(Files.readAllBytes(xlsx))).use { wb ->
+            wb.creationHelper.createFormulaEvaluator().evaluateAll()
+            val p = wb.getSheet("Plan")
+            assertEquals(150.0, p.getRow(9).getCell(1).numericCellValue)    // unit cost
+            assertEquals(4.0, p.getRow(9).getCell(2).numericCellValue)      // times per month untouched
+            assertEquals(600.0, p.getRow(9).getCell(3).numericCellValue)    // monthly = what was asked for
+        }
+        assertEquals(600.0, book.readState().tracker.first { it.category == "Claude subscription" }.planned)
+    }
+
+    @Test
+    fun editingAnEntryRewritesItAndMovesTheTrackerNumbers() {
+        fixture()
+        val yesterday = today.minusDays(1)
+        book.updateEntry(EntryChange(ref(), yesterday, "breakfast", "Foul and eggs", 80.0))
+        val s = book.readState()
+        val row = s.log.single()
+        assertEquals("Breakfast", row.category)               // case fixed to the real category name
+        assertEquals("Foul and eggs", row.description)
+        assertEquals(80.0, row.amount)
+        assertEquals(yesterday.toString(), row.date)
+        assertEquals(80.0, s.total.actual)
+        assertEquals(0.0, s.tracker[2].actual)                // nothing left under Going out
+    }
+
+    @Test
+    fun aChangedRowIsNeverOverwritten() {
+        fixture()
+        // the phone thinks row 2 holds 999, but Excel has 175
+        assertFailsWith<ConflictException> { book.updateEntry(EntryChange(ref(amount = 999.0), today, "Other", "x", 5.0)) }
+        assertFailsWith<ConflictException> { book.updateEntry(EntryChange(ref(date = "2020-01-01"), today, "Other", "x", 5.0)) }
+        assertFailsWith<ConflictException> { book.deleteEntry(ref(amount = 1.0), ledger) }
+        assertEquals(175.0, book.readState().log.single().amount)
+        // an empty row cannot be edited, but deleting one is already done
+        assertFailsWith<ConflictException> { book.updateEntry(EntryChange(ref(row = 9, amount = null, date = null), today, "Other", "x", 5.0)) }
+        assertEquals("gone", book.deleteEntry(ref(row = 9, amount = null, date = null), ledger))
+    }
+
+    @Test
+    fun deletingFreesTheRowAndTheLedgerClaim() {
+        fixture()
+        book.append(listOf(expense("a", "Breakfast", "Foul", 50.0)), ledger)       // goes to row 3
+        assertEquals("deleted", book.deleteEntry(ref(row = 3, amount = 50.0), ledger))
+        assertEquals(1, book.readState().log.size)
+        assertEquals(null, ledger.slotFor("a"))
+        assertEquals("gone", book.deleteEntry(ref(row = 3, amount = 50.0), ledger))   // deleting again is harmless
+        // the freed row is reused
+        assertEquals(3, book.append(listOf(expense("b", "Breakfast", "Eggs", 20.0)), ledger).single().row)
+    }
+
+    @Test
+    fun editRulesForCategories() {
+        fixture()
+        assertFailsWith<IllegalArgumentException> { book.updateEntry(EntryChange(ref(), today, "Nonsense", "x", 5.0)) }
+        assertFailsWith<IllegalArgumentException> { book.updateEntry(EntryChange(ref(), today, "Income", "x", 5.0)) }
+        book.addCategories(listOf(NewCategory("Gym", 100.0)))
+        book.updateEntry(EntryChange(ref(), today, "gym", "Pass", 120.0))
+        assertEquals("Gym", book.readState().log.single().category)
+    }
+
+    @Test
+    fun incomeEntriesCanBeEditedAndDeleted() {
+        fixture()
+        book.append(listOf(expense("i", "Income", "Freelance", 2500.0)), ledger)
+        val incomeRef = ref(row = 2, amount = 2500.0, sheet = "Income")
+        book.updateEntry(EntryChange(incomeRef, today, "Income", "Freelance logo", 3000.0))
+        assertEquals(3000.0, book.readState().incomeReceived)
+        assertEquals("Freelance logo", book.readState().incomeLog.single().source)
+        book.deleteEntry(ref(row = 2, amount = 3000.0, sheet = "Income"), ledger)
+        assertEquals(0, book.readState().incomeLog.size)
+        assertEquals(0.0, book.readState().incomeReceived)
+    }
+
+    @Test
     fun retryIsNotMistakenForAnotherDaysEntryWithTheSameAmount() {
         fixture()   // row 2 is today's 175. Pretend the ledger reserved that row for a different entry (yesterday, also 175).
         ledger.putAll(mapOf("y1" to Slot("Log", 2)))

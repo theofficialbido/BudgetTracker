@@ -27,9 +27,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,8 +42,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -62,9 +65,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.bido.budgetsync.MainViewModel
+import com.bido.budgetsync.data.Calc
 import com.bido.budgetsync.data.CategorySummary
 import com.bido.budgetsync.data.Entry
-import com.bido.budgetsync.data.Expense
 import com.bido.budgetsync.data.MonthSummary
 import com.bido.budgetsync.data.UpdateCheck
 import java.text.DateFormat
@@ -75,15 +78,19 @@ import java.util.Date
 @Composable
 fun HomeScreen(
     vm: MainViewModel,
+    categories: List<String>,
     onAdd: (income: Boolean) -> Unit,
     onCategory: (String) -> Unit,
+    onHistory: () -> Unit,
     onReview: () -> Unit,
     onSettings: () -> Unit,
 ) {
     val state by vm.state.collectAsState()
     val summary by vm.summary.collectAsState()
+    val forecast by vm.forecast.collectAsState()
+    val pendingClose by vm.pendingClose.collectAsState()
+    val templates by vm.expenseTemplates.collectAsState()
     val allEntries by vm.entries.collectAsState()
-    val categories by vm.categories.collectAsState()
     val pending by vm.pending.collectAsState()
     val status by vm.status.collectAsState()
     val syncing by vm.syncing.collectAsState()
@@ -92,26 +99,33 @@ fun HomeScreen(
 
     var filter by rememberSaveable { mutableStateOf<String?>(null) }
     var fabOpen by rememberSaveable { mutableStateOf(false) }
-    var toDelete by remember { mutableStateOf<Expense?>(null) }
+    var editing by remember { mutableStateOf<Entry?>(null) }
     var addingCategory by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
+    LaunchedEffect(Unit) {
+        vm.messages.collect { m ->
+            val result = snackbar.showSnackbar(m.text, actionLabel = if (m.undo != null) "Undo" else null, duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed) m.undo?.invoke()
+        }
+    }
 
     val waiting = allEntries.count { it.waiting }
     // Waiting entries first, then newest by date.
-    val entries = allEntries
-        .sortedWith(
-            compareByDescending<Entry> { it.waiting }
-                .thenByDescending { it.date ?: LocalDate.MIN }
-                .thenByDescending { it.local?.createdAt ?: (it.key.drop(2).toLongOrNull() ?: 0L) },
-        )
+    val entries = allEntries.sortedWith(
+        compareByDescending<Entry> { it.waiting }
+            .thenByDescending { it.date ?: LocalDate.MIN }
+            .thenByDescending { it.local?.createdAt ?: (it.row?.toLong() ?: 0L) },
+    )
     val shown = entries.filter { filter == null || it.category.equals(filter, ignoreCase = true) }.take(40)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Budget Tracker", fontWeight = FontWeight.Bold) },
-                actions = { IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") } },
+                actions = {
+                    IconButton(onClick = onHistory) { Icon(Icons.Default.BarChart, "History and trends") }
+                    IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
+                },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -145,6 +159,31 @@ fun HomeScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item(key = "summary") { SummaryCard(summary, neverSynced = state == null) }
+
+                pendingClose?.let { p ->
+                    item(key = "close") { MonthCloseCard(p, onDecide = { reset, invested, splurged -> vm.closeMonth(p.month, reset, invested, splurged) }) }
+                }
+
+                if (forecast.plannedTotal > 0 || forecast.leftToSpend != 0.0) {
+                    item(key = "pace") { PaceCard(forecast) }
+                }
+
+                if (templates.isNotEmpty()) {
+                    item(key = "quick") {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Quick add", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(templates.take(5)) { t ->
+                                    AssistChip(
+                                        onClick = { vm.quickAdd(t) },
+                                        label = { Text(t.label) },
+                                        leadingIcon = { Icon(categoryIcon(t.category), null, Modifier.size(18.dp)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
 
                 if (pending.isNotEmpty()) {
                     item(key = "pending") {
@@ -216,22 +255,14 @@ fun HomeScreen(
                         }
                     }
                     item(key = e.key) {
-                        EntryRow(e, Modifier.animateItem()) { e.local?.takeIf { !it.synced }?.let { toDelete = it } }
+                        EntryRow(e, Modifier.animateItem()) { editing = e }
                     }
                 }
             }
         }
     }
 
-    toDelete?.let { e ->
-        AlertDialog(
-            onDismissRequest = { toDelete = null },
-            title = { Text("Delete this entry?") },
-            text = { Text("${e.description.ifBlank { e.category }}, ${moneyPrecise(e.amount)} EGP. It hasn't reached Budget.xlsx yet, so this removes it completely.") },
-            confirmButton = { TextButton(onClick = { vm.deleteWaiting(e); toDelete = null }) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { toDelete = null }) { Text("Keep") } },
-        )
-    }
+    editing?.let { EntryEditor(vm, it, categories, onDismiss = { editing = null }) }
     if (addingCategory) {
         AddCategoryDialog(onAdd = { name, planned -> vm.addCategory(name, planned) }, onDismiss = { addingCategory = false })
     }
@@ -241,14 +272,21 @@ fun HomeScreen(
 private fun SummaryCard(summary: MonthSummary, neverSynced: Boolean) {
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(Modifier.padding(20.dp)) {
-            Text("Left after actual spending", style = MaterialTheme.typography.labelLarge)
+            Text("Left to spend", style = MaterialTheme.typography.labelLarge)
             val animated by animateFloatAsState(summary.left.toFloat(), tween(700), label = "left")
             Text(
                 money(animated.toDouble()) + " EGP",
                 style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold,
                 color = if (summary.left < 0) statusColor("OVER") else MaterialTheme.colorScheme.onPrimaryContainer,
             )
-            Text(monthLabel(summary.month), style = MaterialTheme.typography.bodySmall)
+            Text(
+                monthLabel(summary.month) + when {
+                    summary.carriedIn > 0.5 -> " · includes ${money(summary.carriedIn)} carried over"
+                    summary.carriedIn < -0.5 -> " · starts ${money(-summary.carriedIn)} in the red"
+                    else -> ""
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
 
             val planned = summary.total.planned
             val spentFrac = if (planned <= 0) (if (summary.total.actual > 0) 1f else 0f) else (summary.total.actual / planned).toFloat().coerceIn(0f, 1f)
@@ -260,14 +298,55 @@ private fun SummaryCard(summary: MonthSummary, neverSynced: Boolean) {
                 trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
             )
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Stat("Received", money(summary.incomeReceived), incomeColor())
                 Stat("Spent", money(summary.total.actual))
                 Stat("Planned", money(planned))
-                Stat("Received", money(summary.incomeReceived), incomeColor())
             }
-            if (neverSynced) {
+            if (neverSynced && planned <= 0) {
                 Text(
-                    "Plans and alert levels come from the laptop. Sync once and they're remembered; totals work offline after that.",
+                    "Set a plan in each category below, or sync once to bring your plans in from the workbook. " +
+                        "Left to spend only needs the income and spending you enter here.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+        }
+    }
+}
+
+/** What you can spend per day, and whether the month is on course, from this month's pace so far. */
+@Composable
+private fun PaceCard(f: Calc.Forecast) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (f.leftToSpend <= 0) {
+                Text("Nothing left to spend", fontWeight = FontWeight.Bold, color = statusColor("OVER"))
+                Text(
+                    "${f.daysLeft} day${if (f.daysLeft == 1) "" else "s"} left this month. Add income when it arrives and this updates.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text("About ", style = MaterialTheme.typography.bodyMedium)
+                    Text(money(f.safePerDay), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(" EGP a day to last the month", style = MaterialTheme.typography.bodyMedium)
+                }
+                Text(
+                    "${money(f.leftToSpend)} EGP left to spend, ${f.daysLeft} day${if (f.daysLeft == 1) "" else "s"} to go.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            f.projectedTotal?.let { projected ->
+                val over = projected > f.plannedTotal
+                Text(
+                    "At this pace you'll spend ${money(projected)} of ${money(f.plannedTotal)} EGP planned.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (over) statusColor("WATCH") else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            f.atRisk.forEach { c ->
+                Text(
+                    "${c.name} is heading for ${money(c.projected)} against a ${money(c.planned)} plan.",
+                    style = MaterialTheme.typography.bodySmall, color = statusColor("WATCH"),
                 )
             }
         }
@@ -351,12 +430,9 @@ fun IconBadge(category: String) {
 }
 
 @Composable
-private fun EntryRow(e: Entry, modifier: Modifier, onWaitingClick: () -> Unit) {
-    val canDelete = e.local?.synced == false
+fun EntryRow(e: Entry, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-            .then(if (canDelete) Modifier.clickable(onClick = onWaitingClick) else Modifier)
-            .padding(vertical = 6.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconBadge(e.category)
@@ -364,7 +440,7 @@ private fun EntryRow(e: Entry, modifier: Modifier, onWaitingClick: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(e.description.ifBlank { e.category }, maxLines = 1)
             Text(
-                if (e.waiting) "${e.category} · waiting to sync (tap to delete)" else e.category,
+                if (e.waiting) "${e.category} · waiting to sync" else e.category,
                 style = MaterialTheme.typography.bodySmall,
                 color = if (e.waiting) statusColor("WATCH") else MaterialTheme.colorScheme.onSurfaceVariant,
             )

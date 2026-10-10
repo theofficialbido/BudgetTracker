@@ -47,6 +47,48 @@ fun main(args: Array<String>) {
             else replyFile(ex, file, if (name == "app.apk") "application/vnd.android.package-archive" else "application/json; charset=utf-8")
         }
     }
+    server.createContext("/entries") { ex ->
+        guarded(ex, cfg) {
+            if (ex.requestMethod != "POST") { reply(ex, 405, mapOf("error" to "POST only")); return@guarded }
+            val n = mapper.readTree(readBody(ex))
+            val ref = EntryRef(
+                n.path("sheet").asText(""), n.path("row").asInt(-1),
+                n.path("expectDate").takeIf { !it.isMissingNode && !it.isNull }?.asText(),
+                n.path("expectAmount").takeIf { !it.isMissingNode && !it.isNull }?.asDouble(),
+            )
+            when (ex.requestURI.path) {
+                "/entries/delete" -> reply(ex, 200, mapOf("status" to book.deleteEntry(ref, ledger)))
+                "/entries/update" -> {
+                    val amount = n.path("amount").asDouble(Double.NaN)
+                    require(amount.isFinite() && amount > 0) { "amount must be positive" }
+                    val change = EntryChange(ref, LocalDate.parse(n.path("date").asText()), n.path("category").asText("").trim(),
+                        n.path("description").asText("").trim(), amount)
+                    reply(ex, 200, mapOf("status" to book.updateEntry(change)))
+                }
+                else -> reply(ex, 404, mapOf("error" to "unknown"))
+            }
+        }
+    }
+    server.createContext("/closings") { ex ->
+        guarded(ex, cfg) {
+            if (ex.requestMethod != "POST") { reply(ex, 405, mapOf("error" to "POST only")); return@guarded }
+            val root = mapper.readTree(readBody(ex))
+            require(root != null && root.isArray) { "Body must be a JSON array" }
+            val items = root.map { n ->
+                ClosingRow(n.path("month").asText(""), n.path("reset").asBoolean(false), n.path("invested").asDouble(0.0), n.path("splurged").asDouble(0.0))
+            }
+            reply(ex, 200, mapOf("results" to book.setClosings(items)))
+        }
+    }
+    server.createContext("/plans") { ex ->
+        guarded(ex, cfg) {
+            if (ex.requestMethod != "POST") { reply(ex, 405, mapOf("error" to "POST only")); return@guarded }
+            val root = mapper.readTree(readBody(ex))
+            require(root != null && root.isArray) { "Body must be a JSON array" }
+            val items = root.map { n -> PlanChange(n.path("name").asText(""), n.path("planned").asDouble(Double.NaN)) }
+            reply(ex, 200, mapOf("results" to book.setPlans(items)))
+        }
+    }
     server.createContext("/categories") { ex ->
         guarded(ex, cfg) {
             if (ex.requestMethod != "POST") reply(ex, 405, mapOf("error" to "POST only"))
@@ -60,6 +102,7 @@ fun main(args: Array<String>) {
         }
     }
     server.start()
+    if (cfg.bind == null) BackupManager(cfg.workbook, cfg.dataDir.resolve("backups").resolve("daily")).startSchedule()
     if (cfg.bind == null) MdnsAdvertiser(cfg.port).start()   // a --bind test instance stays invisible on the network
 
     println("Budget sync helper running on port ${cfg.port}")
@@ -107,6 +150,8 @@ private fun guarded(ex: HttpExchange, cfg: Config, block: () -> Unit) {
         if (!ok) reply(ex, 401, mapOf("error" to "bad token")) else block()
     } catch (e: BusyException) {
         reply(ex, 503, mapOf("error" to "busy", "detail" to e.message))
+    } catch (e: ConflictException) {
+        reply(ex, 409, mapOf("error" to "conflict", "detail" to e.message))
     } catch (e: FullException) {
         reply(ex, 507, mapOf("error" to "full", "detail" to e.message))
     } catch (e: IllegalArgumentException) {

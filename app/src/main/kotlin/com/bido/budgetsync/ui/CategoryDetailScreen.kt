@@ -57,16 +57,22 @@ private data class Group(val label: String, val entries: List<Entry>) {
 /** Tap a category on Home to land here: where the money in it went, grouped by what it was spent on, then every entry. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CategoryDetailScreen(vm: MainViewModel, category: String, onBack: () -> Unit) {
+fun CategoryDetailScreen(vm: MainViewModel, category: String, categories: List<String>, initialMonth: String?, onBack: () -> Unit) {
     val state by vm.state.collectAsState()
     val allEntries by vm.entries.collectAsState()
     val custom by vm.customCategories.collectAsState()
+    var editing by remember { mutableStateOf<Entry?>(null) }
 
-    var monthText by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
+    var monthText by rememberSaveable { mutableStateOf(initialMonth ?: YearMonth.now().toString()) }
     val month = YearMonth.parse(monthText)
     val isIncome = category.equals(Calc.INCOME, ignoreCase = true)
 
-    val summary = remember(state, allEntries, custom, month) { Calc.summarize(state, allEntries, custom, month) }
+    val plans by vm.plans.collectAsState()
+    val closings by vm.closings.collectAsState()
+    var changingPlan by remember { mutableStateOf(false) }
+    val summary = remember(state, allEntries, custom, month, plans, closings) {
+        Calc.summarize(state, allEntries, custom, month, plans, closings)
+    }
     val line = summary.categories.firstOrNull { it.name.equals(category, ignoreCase = true) }
     val items = remember(allEntries, category, month) {
         allEntries
@@ -145,6 +151,18 @@ fun CategoryDetailScreen(vm: MainViewModel, category: String, onBack: () -> Unit
                 }
             }
 
+            if (line != null) {
+                item(key = "plan") {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Monthly plan", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (line.planned > 0) "${money(line.planned)} EGP" else "Not set", fontWeight = FontWeight.Medium)
+                        }
+                        androidx.compose.material3.TextButton(onClick = { changingPlan = true }) { Text("Change plan") }
+                    }
+                }
+            }
+
             if (items.isEmpty()) {
                 item(key = "empty") {
                     Text(
@@ -195,22 +213,41 @@ fun CategoryDetailScreen(vm: MainViewModel, category: String, onBack: () -> Unit
 
                 item(key = "all-title") { Text("All entries", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp)) }
                 items(items, key = { "e-${it.key}" }) { e ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(e.description.ifBlank { category }, maxLines = 1)
-                            Text(
-                                dateLabel(e.date?.toString() ?: "") + if (e.waiting) " · waiting to sync" else "",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (e.waiting) statusColor("WATCH") else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Text(
-                            (if (isIncome) "+" else "") + moneyPrecise(e.amount), fontWeight = FontWeight.SemiBold,
-                            color = if (isIncome) incomeColor() else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
+                    EntryRow(e) { editing = e }
                 }
             }
         }
+    }
+
+    editing?.let { EntryEditor(vm, it, categories, onDismiss = { editing = null }) }
+
+    if (changingPlan && line != null) {
+        var text by remember(line.name) { mutableStateOf(java.math.BigDecimal.valueOf(line.planned).stripTrailingZeros().toPlainString()) }
+        val value = com.bido.budgetsync.data.Amounts.parse(text)
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { changingPlan = false },
+            title = { Text("Plan for ${line.name}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = text, onValueChange = { text = com.bido.budgetsync.data.Amounts.clean(it) },
+                        label = { Text("EGP a month") }, singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "Used for this category's progress and alerts. It is copied to Budget.xlsx for your briefs on the next sync.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { vm.setPlan(line.name, value!!); changingPlan = false },
+                    enabled = value != null && value >= 0,
+                ) { Text("Save") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { changingPlan = false }) { Text("Cancel") } },
+        )
     }
 }

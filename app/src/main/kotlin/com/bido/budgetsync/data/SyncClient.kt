@@ -15,6 +15,7 @@ data class TrackerLine(val category: String, val planned: Double, val actual: Do
 data class LogLine(val row: Int, val date: String?, val category: String, val description: String, val amount: Double?)
 
 data class IncomeLine(val row: Int, val date: String?, val source: String, val amount: Double?)
+data class ClosingLine(val month: String, val reset: Boolean, val invested: Double, val splurged: Double)
 
 /** What the laptop helper reports: same numbers the Tracker sheet shows. */
 data class ServerState(
@@ -33,6 +34,8 @@ data class ServerState(
     /** Alert levels from the Plan sheet, so the phone can work out OK / WATCH / OVER without the laptop. */
     val watchAt: Double = 0.8,
     val overAt: Double = 1.0,
+    /** Month-end decisions kept in the workbook, so a reinstalled phone remembers them. */
+    val closings: List<ClosingLine> = emptyList(),
 ) {
     companion object {
         fun fromJson(text: String): ServerState {
@@ -61,13 +64,19 @@ data class ServerState(
                     )
                 }
             }
+            val closings = (o.optJSONArray("closings") ?: JSONArray()).let { a ->
+                (0 until a.length()).map {
+                    val j = a.getJSONObject(it)
+                    ClosingLine(j.getString("month"), j.optBoolean("reset", false), j.optDouble("invested", 0.0), j.optDouble("splurged", 0.0))
+                }
+            }
             val extras = (o.optJSONArray("extras") ?: JSONArray()).let { a -> (0 until a.length()).map { line(a.getJSONObject(it)) } }
             val tracker = o.getJSONArray("tracker").let { a -> (0 until a.length()).map { line(a.getJSONObject(it)) } }
             return ServerState(
                 o.getString("month"), cats, log, tracker, line(o.getJSONObject("total")),
                 o.getDouble("income"), o.getDouble("leftAfterActual"), o.optDouble("incomeReceived", 0.0),
                 o.optDouble("plannedIncome", 0.0), incomeLog, extras,
-                o.optDouble("watchAt", 0.8), o.optDouble("overAt", 1.0),
+                o.optDouble("watchAt", 0.8), o.optDouble("overAt", 1.0), closings,
             )
         }
     }
@@ -96,6 +105,25 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
         return (0 until res.length()).map { res.getJSONObject(it).getString("id") }.toSet()
     }
 
+    /** Changes one entry already in the workbook. [expectDate] and [expectAmount] are what the phone saw, so a row changed in Excel is refused. */
+    fun updateEntry(
+        sheet: String, row: Int, expectDate: String?, expectAmount: Double?,
+        date: String, category: String, description: String, amount: Double,
+    ) {
+        request(
+            "POST", "/entries/update",
+            JSONObject().put("sheet", sheet).put("row", row).put("expectDate", expectDate).put("expectAmount", expectAmount)
+                .put("date", date).put("category", category).put("description", description).put("amount", amount).toString(),
+        )
+    }
+
+    fun deleteEntry(sheet: String, row: Int, expectDate: String?, expectAmount: Double?) {
+        request(
+            "POST", "/entries/delete",
+            JSONObject().put("sheet", sheet).put("row", row).put("expectDate", expectDate).put("expectAmount", expectAmount).toString(),
+        )
+    }
+
     /** What build the laptop has published for the phone, as (versionCode, versionName). */
     fun fetchVersion(): Pair<Long, String> {
         val o = JSONObject(request("GET", "/app/version", null))
@@ -120,6 +148,23 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** Sends the month-end decisions. Returns the months the laptop has recorded. */
+    fun pushClosings(items: List<MonthClosing>): Set<String> {
+        val body = JSONArray().apply {
+            items.forEach { put(JSONObject().put("month", it.month).put("reset", it.reset).put("invested", it.invested).put("splurged", it.splurged)) }
+        }.toString()
+        val res = JSONObject(request("POST", "/closings", body)).getJSONArray("results")
+        return (0 until res.length()).map { res.getJSONObject(it).getString("name") }.toSet()
+    }
+
+    /** Sends plans set in the app. Returns the names the laptop handled (updated, or a category it doesn't have yet is skipped). */
+    fun pushPlans(items: List<PlanOverride>): Set<String> {
+        val body = JSONArray().apply { items.forEach { put(JSONObject().put("name", it.name).put("planned", it.planned)) } }.toString()
+        val res = JSONObject(request("POST", "/plans", body)).getJSONArray("results")
+        return (0 until res.length()).map { res.getJSONObject(it) }
+            .filter { it.getString("status") != "unknown" }.map { it.getString("name") }.toSet()
     }
 
     /** Sends categories created on the phone. Returns the names the laptop now has (added, or already there). */
@@ -154,6 +199,7 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
                 in 200..299 -> text
                 401 -> throw SyncException(SyncException.Kind.AUTH, "Wrong pairing token")
                 503 -> throw SyncException(SyncException.Kind.BUSY, "Budget.xlsx is busy (Excel or OneDrive), will retry")
+                409 -> throw SyncException(SyncException.Kind.OTHER, "That entry changed in Excel. Pull down to refresh, then try again.")
                 507 -> throw SyncException(SyncException.Kind.FULL, "The Log sheet is full (1000 rows)")
                 else -> throw SyncException(SyncException.Kind.OTHER, "Laptop answered $code")
             }
@@ -202,8 +248,8 @@ object Syncer {
      * A client for whichever laptop address answers right now, or null. Used by the app updater. If a sync just found the
      * laptop unreachable it returns null at once instead of waiting through the same slow attempts again.
      */
-    suspend fun connectedClient(context: Context): SyncClient? {
-        if (System.currentTimeMillis() - unreachableAt < RETRY_AFTER_MS) return null
+    suspend fun connectedClient(context: Context, force: Boolean = false): SyncClient? {
+        if (!force && System.currentTimeMillis() - unreachableAt < RETRY_AFTER_MS) return null
         return mutex.withLock {
             withContext(Dispatchers.IO) {
                 val prefs = Prefs(context)
@@ -229,6 +275,17 @@ object Syncer {
                     val newCategories = db.customCategoryDao().unsynced()
                     if (newCategories.isNotEmpty()) {
                         db.customCategoryDao().markSynced(client.pushCategories(newCategories).toList())
+                        changed = true
+                    }
+                    // Month-end decisions and plans set in the app are copied across for redundancy and for the briefs.
+                    val closings = db.monthClosingDao().unsynced()
+                    if (closings.isNotEmpty()) {
+                        db.monthClosingDao().markSynced(client.pushClosings(closings).toList())
+                        changed = true
+                    }
+                    val plans = db.planDao().unsynced()
+                    if (plans.isNotEmpty()) {
+                        db.planDao().markSynced(client.pushPlans(plans).toList())
                         changed = true
                     }
                     val queued = dao.unsynced()

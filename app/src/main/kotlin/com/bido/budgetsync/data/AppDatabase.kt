@@ -28,6 +28,17 @@ interface ExpenseDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(expense: Expense)
 
+    @Query("SELECT * FROM expenses WHERE id = :id")
+    suspend fun get(id: String): Expense?
+
+    /** Entries the cached data does not contain yet, once (the widget and alerts have no flow to watch). */
+    @Query("SELECT * FROM expenses WHERE inCache = 0")
+    suspend fun notInCacheNow(): List<Expense>
+
+    /** Changes an entry that has not been sent yet. */
+    @Query("UPDATE expenses SET date = :date, category = :category, description = :description, amount = :amount WHERE id = :id AND synced = 0")
+    suspend fun editUnsynced(id: String, date: String, category: String, description: String, amount: Double): Int
+
     @Query("DELETE FROM expenses WHERE id = :id AND synced = 0")
     suspend fun deleteUnsynced(id: String)
 
@@ -44,6 +55,9 @@ interface CustomCategoryDao {
     @Query("SELECT * FROM custom_categories ORDER BY name COLLATE NOCASE")
     fun all(): Flow<List<CustomCategory>>
 
+    @Query("SELECT * FROM custom_categories")
+    suspend fun allNow(): List<CustomCategory>
+
     @Query("SELECT * FROM custom_categories WHERE synced = 0")
     suspend fun unsynced(): List<CustomCategory>
 
@@ -51,6 +65,42 @@ interface CustomCategoryDao {
     suspend fun insert(category: CustomCategory): Long
 
     @Query("UPDATE custom_categories SET synced = 1 WHERE name IN (:names)")
+    suspend fun markSynced(names: List<String>)
+}
+
+@Dao
+interface MonthClosingDao {
+    @Query("SELECT * FROM month_closings")
+    fun all(): Flow<List<MonthClosing>>
+
+    @Query("SELECT * FROM month_closings")
+    suspend fun allNow(): List<MonthClosing>
+
+    @Query("SELECT * FROM month_closings WHERE synced = 0")
+    suspend fun unsynced(): List<MonthClosing>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(closing: MonthClosing)
+
+    @Query("UPDATE month_closings SET synced = 1 WHERE month IN (:months)")
+    suspend fun markSynced(months: List<String>)
+}
+
+@Dao
+interface PlanDao {
+    @Query("SELECT * FROM plans")
+    fun all(): Flow<List<PlanOverride>>
+
+    @Query("SELECT * FROM plans")
+    suspend fun allNow(): List<PlanOverride>
+
+    @Query("SELECT * FROM plans WHERE synced = 0")
+    suspend fun unsynced(): List<PlanOverride>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(plan: PlanOverride)
+
+    @Query("UPDATE plans SET synced = 1 WHERE name IN (:names)")
     suspend fun markSynced(names: List<String>)
 }
 
@@ -79,14 +129,33 @@ abstract class PendingSmsDao {
     abstract suspend fun setStatus(key: String, status: String)
 }
 
-@Database(entities = [Expense::class, PendingSms::class, CustomCategory::class], version = 2, exportSchema = false)
+@Database(
+    entities = [Expense::class, PendingSms::class, CustomCategory::class, MonthClosing::class, PlanOverride::class],
+    version = 3,
+    exportSchema = false,
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun expenseDao(): ExpenseDao
     abstract fun pendingSmsDao(): PendingSmsDao
     abstract fun customCategoryDao(): CustomCategoryDao
+    abstract fun monthClosingDao(): MonthClosingDao
+    abstract fun planDao(): PlanDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
+
+        /** Adds the month-end decisions and in-app plans; existing data is untouched. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS month_closings (month TEXT NOT NULL, reset INTEGER NOT NULL, " +
+                        "invested REAL NOT NULL, splurged REAL NOT NULL, synced INTEGER NOT NULL, PRIMARY KEY(month))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS plans (name TEXT NOT NULL, planned REAL NOT NULL, synced INTEGER NOT NULL, PRIMARY KEY(name))"
+                )
+            }
+        }
 
         /** Keeps queued entries: adds the new columns/table and removes duplicate pending SMS rows already saved. */
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -109,7 +178,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "budgetsync.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build().also { instance = it }
         }
     }
