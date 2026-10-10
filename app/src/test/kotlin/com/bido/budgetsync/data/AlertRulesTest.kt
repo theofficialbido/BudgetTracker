@@ -37,12 +37,32 @@ class AlertRulesTest {
         assertTrue(AlertRules.newlyReached(emptyMap(), oct, listOf(line("Other", "UNPLANNED"))).isEmpty())
     }
 
-    @Test fun reminderOnlyInTheEveningOnceAndWhenNothingLogged() {
-        val evening = LocalDateTime.of(2026, 10, 6, 21, 30)
-        assertTrue(AlertRules.shouldRemind(evening, "", hasExpenseToday = false))
-        assertFalse(AlertRules.shouldRemind(evening, "", hasExpenseToday = true))
-        assertFalse(AlertRules.shouldRemind(evening, "2026-10-06", hasExpenseToday = false))      // already reminded today
-        assertTrue(AlertRules.shouldRemind(evening, "2026-10-05", hasExpenseToday = false))       // yesterday's does not count
-        assertFalse(AlertRules.shouldRemind(LocalDateTime.of(2026, 10, 6, 15, 0), "", hasExpenseToday = false))
+    @Test fun theReminderGoesOutEveryEveningOnceWhateverWasLogged() {
+        val evening = LocalDateTime.of(2026, 10, 6, 21, 0, 30)
+        assertTrue(AlertRules.shouldRemind(evening, ""))
+        assertTrue(AlertRules.shouldRemind(LocalDateTime.of(2026, 10, 6, 23, 40), "2026-10-05"))   // yesterday's does not count
+        assertFalse(AlertRules.shouldRemind(evening, "2026-10-06"))                               // already sent today
+        assertFalse(AlertRules.shouldRemind(LocalDateTime.of(2026, 10, 6, 20, 59), ""))           // not 9pm yet
+        assertFalse(AlertRules.shouldRemind(LocalDateTime.of(2026, 10, 6, 15, 0), ""))
+    }
+
+    @Test fun theNextReminderIsTonightOrTomorrowAt9pm() {
+        assertEquals(LocalDateTime.of(2026, 10, 6, 21, 0, 30), AlertRules.nextReminder(LocalDateTime.of(2026, 10, 6, 8, 0)))
+        assertEquals(LocalDateTime.of(2026, 10, 6, 21, 0, 30), AlertRules.nextReminder(LocalDateTime.of(2026, 10, 6, 20, 59, 59)))
+        // once it has passed, the next one is tomorrow
+        assertEquals(LocalDateTime.of(2026, 10, 7, 21, 0, 30), AlertRules.nextReminder(LocalDateTime.of(2026, 10, 6, 21, 0, 30)))
+        assertEquals(LocalDateTime.of(2026, 10, 7, 21, 0, 30), AlertRules.nextReminder(LocalDateTime.of(2026, 10, 6, 23, 59)))
+        // across a month end
+        assertEquals(LocalDateTime.of(2026, 11, 1, 21, 0, 30), AlertRules.nextReminder(LocalDateTime.of(2026, 10, 31, 22, 0)))
+    }
+
+    @Test fun reminderTextMentionsWhatIsAlreadyLogged() {
+        val none = AlertRules.reminderText(0, 0.0)
+        assertEquals("Log today's expenses", none.first)
+        assertTrue(none.second.contains("Nothing logged"))
+        val one = AlertRules.reminderText(1, 45.0)
+        assertEquals("Anything else to log today?", one.first)
+        assertTrue(one.second.contains("1 expense (45 EGP)"))
+        assertTrue(AlertRules.reminderText(3, 1250.0).second.contains("3 expenses (1,250 EGP)"))
     }
 }

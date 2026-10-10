@@ -18,6 +18,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.bido.budgetsync.MainActivity
 import com.bido.budgetsync.R
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.YearMonth
@@ -40,9 +41,29 @@ object AlertRules {
     fun nextState(previous: Map<String, String>, month: YearMonth, lines: List<CategorySummary>): Map<String, String> =
         previous.filterKeys { it.startsWith("$month|") } + lines.associate { "$month|${it.name}" to it.status }
 
-    /** Evening reminder: only in the evening, only once a day, and only if no expense was logged today. */
-    fun shouldRemind(now: java.time.LocalDateTime, lastReminded: String, hasExpenseToday: Boolean): Boolean =
-        now.toLocalTime() >= LocalTime.of(21, 0) && lastReminded != now.toLocalDate().toString() && !hasExpenseToday
+    val REMINDER_TIME: LocalTime = LocalTime.of(21, 0)
+
+    /**
+     * The evening reminder goes out every day, whatever has been logged: you may have entered some expenses but not all
+     * of them. It is sent once a day, from 9pm on (a missed alarm is caught by the periodic check until midnight).
+     */
+    fun shouldRemind(now: java.time.LocalDateTime, lastReminded: String): Boolean =
+        now.toLocalTime() >= REMINDER_TIME && lastReminded != now.toLocalDate().toString()
+
+    /** The next 9pm: today's if it hasn't come yet, otherwise tomorrow's. Set 30 seconds late so it never fires early. */
+    fun nextReminder(now: java.time.LocalDateTime): java.time.LocalDateTime {
+        val today = now.toLocalDate().atTime(REMINDER_TIME).plusSeconds(30)
+        return if (now.isBefore(today)) today else today.plusDays(1)
+    }
+
+    /** Title and text of the reminder, from what has been logged today. */
+    fun reminderText(expenseCount: Int, total: Double): Pair<String, String> =
+        if (expenseCount == 0) {
+            "Log today's expenses" to "Nothing logged today yet. Tap to add what you spent."
+        } else {
+            val what = if (expenseCount == 1) "1 expense" else "$expenseCount expenses"
+            "Anything else to log today?" to "You've logged $what (${String.format(java.util.Locale.US, "%,.0f", total)} EGP) so far. Tap to add the rest."
+        }
 }
 
 /** Notifications about the budget, worked out on the phone from the same numbers as the home screen. */
@@ -54,7 +75,7 @@ object Alerts {
         Build.VERSION.SDK_INT < 33 ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    /** Starts or stops the background check to match the two settings. */
+    /** Starts or stops the background check and the 9pm alarm to match the two settings. */
     fun reschedule(context: Context) {
         val prefs = Prefs(context)
         val wm = WorkManager.getInstance(context)
@@ -63,6 +84,22 @@ object Alerts {
         } else {
             wm.cancelUniqueWork(WORK)
         }
+        if (prefs.alertsReminder) scheduleReminder(context) else cancelReminder(context)
+    }
+
+    private fun reminderIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
+        context, 9100, Intent(context, ReminderReceiver::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    /** Sets the alarm for the next 9pm. It runs even when the phone is idle, and is set again after each reminder and each reboot. */
+    fun scheduleReminder(context: Context) {
+        val alarms = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+        val at = AlertRules.nextReminder(java.time.LocalDateTime.now()).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, at, reminderIntent(context))
+    }
+
+    fun cancelReminder(context: Context) {
+        (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).cancel(reminderIntent(context))
     }
 
     /** Remember where every category stands now, without notifying, so turning alerts on does not announce old news. */
@@ -93,32 +130,57 @@ object Alerts {
             }
             prefs.alertState = AlertRules.nextState(previous, month, summary.categories)
         }
-        if (notify && prefs.alertsReminder) {
+        if (notify && prefs.alertsReminder && AlertRules.shouldRemind(now, prefs.lastReminderDate)) {
             val today: LocalDate = now.toLocalDate()
-            val hasExpense = entries.any { !it.isIncome && it.date == today }
-            if (AlertRules.shouldRemind(now, prefs.lastReminderDate, hasExpense)) {
-                prefs.lastReminderDate = today.toString()
-                post(context, id = 9001, title = "Nothing logged today", text = "Tap to add today's expenses before you forget.")
-            }
+            val todays = entries.filter { !it.isIncome && it.date == today }
+            prefs.lastReminderDate = today.toString()
+            val (title, text) = AlertRules.reminderText(todays.size, todays.sumOf { it.amount })
+            post(context, id = 9001, title = title, text = text, openAdd = true)
         }
     }
 
     private fun money(v: Double) = String.format(java.util.Locale.US, "%,.0f", v)
 
-    private fun post(context: Context, id: Int, title: String, text: String) {
+    /** [openAdd] makes a tap on the notification open the Add expense screen directly. */
+    private fun post(context: Context, id: Int, title: String, text: String, openAdd: Boolean = false) {
         if (!hasPermission(context) || !NotificationManagerCompat.from(context).areNotificationsEnabled()) return
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL) == null) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "Budget alerts", NotificationManager.IMPORTANCE_DEFAULT))
         }
-        val open = PendingIntent.getActivity(
-            context, id, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        val intent = Intent(context, MainActivity::class.java)
+            .setAction(if (openAdd) "open-expense" else "open-app")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        if (openAdd) intent.putExtra(MainActivity.EXTRA_OPEN, "expense")
+        val open = PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(text)
             .setContentIntent(open).setAutoCancel(true).build()
         runCatching { NotificationManagerCompat.from(context).notify(id, n) }   // permission can be revoked at any time
+    }
+}
+
+/** Fires at 9pm: sends the reminder, then sets the alarm for the next evening. */
+class ReminderReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val pending = goAsync()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                runCatching { Alerts.evaluate(context) }
+            } finally {
+                if (Prefs(context).alertsReminder) Alerts.scheduleReminder(context)
+                pending.finish()
+            }
+        }
+    }
+}
+
+/** Alarms are lost on reboot and on app update, so set the 9pm one again. */
+class BootReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            Alerts.reschedule(context)
+        }
     }
 }
 

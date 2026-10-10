@@ -9,7 +9,7 @@ plugins {
 // key and a higher versionCode. The key is the debug keystore, which stays the same on this laptop. The versionCode is
 // minutes since 2026-01-01, so every build is newer than the last one without anyone remembering to bump it.
 val appVersionCode = ((System.currentTimeMillis() - 1_767_225_600_000L) / 60_000L).toInt()
-val appVersionName = "1.6"
+val appVersionName = "1.7"
 
 android {
     namespace = "com.bido.budgetsync"

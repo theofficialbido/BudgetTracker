@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7
+
+### Changed
+- **The 9pm reminder to log the day's expenses is on by default and always sent.** Before, it was off until switched on and stayed quiet if anything had been logged. Now every evening at 9pm it says either "Nothing logged today yet" or "You've logged 3 expenses (410 EGP) so far. Anything else to log?", since you may have entered some but not all. Tapping it opens Add expense.
+- It is a real alarm (set again after each reminder, after a reboot and after an app update), not just the periodic check, with the periodic check kept as a backup until midnight.
+- The app asks once for permission to send notifications (Android 13 and later need it).
+
 ## 1.6
 
 ### Changed

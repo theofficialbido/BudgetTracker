@@ -37,10 +37,15 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("alertsCategory", false)
         set(v) = sp.edit().putBoolean("alertsCategory", v).apply()
 
-    /** Remind in the evening if nothing was logged today. */
+    /** The 9pm reminder to log the day's expenses. On unless switched off; it stays silent until notifications are allowed. */
     var alertsReminder: Boolean
-        get() = sp.getBoolean("alertsReminder", false)
+        get() = sp.getBoolean("alertsReminder", true)
         set(v) = sp.edit().putBoolean("alertsReminder", v).apply()
+
+    /** The one-time "allow notifications?" question has been shown. */
+    var askedNotifications: Boolean
+        get() = sp.getBoolean("askedNotifications", false)
+        set(v) = sp.edit().putBoolean("askedNotifications", v).apply()
 
     /** Last status notified per month and category, so each step up (OK, WATCH, OVER) is announced once. Stored as lines "key=STATUS". */
     var alertState: Map<String, String>

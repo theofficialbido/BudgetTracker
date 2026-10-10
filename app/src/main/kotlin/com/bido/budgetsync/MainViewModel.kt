@@ -115,6 +115,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onOpen() {
         currentMonth.value = YearMonth.now()
         SyncScheduler.ensurePeriodic(getApplication())
+        Alerts.reschedule(getApplication())   // keeps the 9pm reminder alarm set, also right after an update
         viewModelScope.launch {
             runCatching { SmsInboxScanner.scan(getApplication()) }
             syncNow()

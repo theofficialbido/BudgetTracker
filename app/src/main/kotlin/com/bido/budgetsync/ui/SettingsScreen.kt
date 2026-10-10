@@ -161,7 +161,13 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                 Switch(checked = alertsCategory, onCheckedChange = { toggleAlert("category", it) })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Remind me at 9pm if I haven't logged anything", Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text("Remind me at 9pm to log the day's expenses")
+                    Text(
+                        "Every evening, with what you've logged so far. Tapping it opens Add expense.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Switch(checked = alertsReminder, onCheckedChange = { toggleAlert("reminder", it) })
             }
 

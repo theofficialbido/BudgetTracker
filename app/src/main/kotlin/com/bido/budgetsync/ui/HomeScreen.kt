@@ -263,6 +263,32 @@ fun HomeScreen(
     }
 
     editing?.let { EntryEditor(vm, it, categories, onDismiss = { editing = null }) }
+
+    // Ask once for permission to send the 9pm reminder (Android 13 and later need it to be granted).
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var askNotifications by remember {
+        mutableStateOf(!com.bido.budgetsync.data.Prefs(ctx).askedNotifications && !com.bido.budgetsync.data.Alerts.hasPermission(ctx))
+    }
+    val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { askNotifications = false }
+    if (askNotifications) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { com.bido.budgetsync.data.Prefs(ctx).askedNotifications = true; askNotifications = false },
+            title = { Text("Remind you at 9pm?") },
+            text = { Text("Every evening at 9pm the app can remind you to log the day's expenses, so nothing gets forgotten. It needs permission to send notifications.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    com.bido.budgetsync.data.Prefs(ctx).askedNotifications = true
+                    notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }) { Text("Allow") }
+            },
+            dismissButton = {
+                TextButton(onClick = { com.bido.budgetsync.data.Prefs(ctx).askedNotifications = true; askNotifications = false }) { Text("Not now") }
+            },
+        )
+    }
+
     if (addingCategory) {
         AddCategoryDialog(onAdd = { name, planned -> vm.addCategory(name, planned) }, onDismiss = { addingCategory = false })
     }
