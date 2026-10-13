@@ -338,6 +338,7 @@ object Syncer {
                     try {
                         val receipt = ReceiptJson.decode(client.pushSnapshot(SnapshotJson.encode(snapshot)))
                         LaptopSync.markTaken(db, receipt)
+                        SelfUpdater.onOffer(context, receipt.update)
                         val back = receipt.stateJson
                         if (back != null) state = back else {
                             try { state = client.fetchState() } catch (e: SyncException) {

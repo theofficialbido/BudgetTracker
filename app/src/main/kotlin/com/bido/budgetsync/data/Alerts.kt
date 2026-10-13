@@ -181,6 +181,11 @@ class BootReceiver : android.content.BroadcastReceiver() {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             Alerts.reschedule(context)
         }
+        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            // updated from the laptop: sync at once so the laptop sees the new version
+            SelfUpdater.clearNotification(context)
+            SyncScheduler.enqueueNow(context)
+        }
     }
 }
 

@@ -61,4 +61,13 @@ class SnapshotJsonTest {
         assertEquals("2026-10", org.json.JSONObject(back.stateJson!!).getString("month"))
         assertNull(ReceiptJson.decode(ReceiptJson.encode(r.copy(stateJson = null))).stateJson)
     }
+
+    @Test fun versionCodeAndUpdateOfferRoundTripAndAreOptional() {
+        val s = snapshot.copy(appVersionCode = 411517)
+        assertEquals(411517L, SnapshotJson.decode(SnapshotJson.encode(s)).appVersionCode)
+        assertEquals(0L, SnapshotJson.decode("""{"version":1,"generatedAt":5,"today":6}""").appVersionCode)
+        val r = SyncReceipt(emptyList(), emptyList(), emptyList(), emptyList(), null, UpdateOffer(411600, "1.10"))
+        assertEquals(UpdateOffer(411600, "1.10"), ReceiptJson.decode(ReceiptJson.encode(r)).update)
+        assertNull(ReceiptJson.decode(ReceiptJson.encode(r.copy(update = null))).update)
+    }
 }

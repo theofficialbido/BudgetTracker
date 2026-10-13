@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -25,11 +24,7 @@ sealed interface UpdateCheck {
 object Updater {
     private const val FILE = "updates/app.apk"
 
-    @Suppress("DEPRECATION")
-    fun installedVersion(context: Context): Pair<Long, String> {
-        val p = context.packageManager.getPackageInfo(context.packageName, 0)
-        return p.longVersionCode to (p.versionName ?: "")
-    }
+    fun installedVersion(context: Context): Pair<Long, String> = SelfUpdater.installed(context)
 
     suspend fun check(context: Context): UpdateCheck {
         val client = Syncer.connectedClient(context) ?: return UpdateCheck.Failed("Laptop not reachable on this network")
@@ -54,7 +49,7 @@ object Updater {
         )
     }
 
-    /** Downloads the published APK and opens Android's installer for it. Returns an error message, or null on success. */
+    /** Downloads the published APK and hands it to Android's installer. Returns an error message, or null on success. */
     suspend fun downloadAndInstall(context: Context): String? {
         val client = Syncer.connectedClient(context) ?: return "Laptop not reachable on this network"
         val file = File(context.cacheDir, FILE)
@@ -65,12 +60,11 @@ object Updater {
         } catch (e: Exception) {
             return "Download failed"
         }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, "application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-        return null
+        return try {
+            withContext(Dispatchers.IO) { SelfUpdater.install(context, file) }
+            null
+        } catch (e: Exception) {
+            "Install failed: " + (e.message ?: e.javaClass.simpleName)
+        }
     }
 }

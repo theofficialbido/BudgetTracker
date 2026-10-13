@@ -50,6 +50,8 @@ data class SnapshotSummary(
 data class BudgetSnapshot(
     val device: String,
     val appVersion: String,
+    /** The installed build (versionCode, minutes since 2026-01-01 at build time); 0 from apps older than this field. */
+    val appVersionCode: Long = 0,
     /** Epoch millis on the phone when the snapshot was taken. */
     val generatedAt: Long,
     /** The phone's "today" as an epoch day. */
@@ -71,6 +73,7 @@ object SnapshotJson {
         root.put("version", BudgetSnapshot.VERSION)
         root.put("device", s.device)
         root.put("appVersion", s.appVersion)
+        root.put("appVersionCode", s.appVersionCode)
         root.put("generatedAt", s.generatedAt)
         root.put("today", s.today)
         root.put("entries", JSONArray().also { a ->
@@ -126,6 +129,7 @@ object SnapshotJson {
         return BudgetSnapshot(
             device = root.optString("device", "phone"),
             appVersion = root.optString("appVersion", ""),
+            appVersionCode = root.optLong("appVersionCode", 0),
             generatedAt = root.getLong("generatedAt"),
             today = root.getLong("today"),
             entries = root.optJSONArray("entries").mapObjects {
@@ -163,7 +167,11 @@ data class SyncReceipt(
     val plans: List<String>,
     val closings: List<String>,
     val stateJson: String?,
+    /** A newer build the laptop has ready (set only after "Update phone" was pressed there); fetched from /app/apk. */
+    val update: UpdateOffer? = null,
 )
+
+data class UpdateOffer(val versionCode: Long, val versionName: String)
 
 object ReceiptJson {
     fun encode(r: SyncReceipt): String {
@@ -173,6 +181,7 @@ object ReceiptJson {
         o.put("plans", JSONArray(r.plans))
         o.put("closings", JSONArray(r.closings))
         o.put("state", r.stateJson?.let { JSONObject(it) } ?: JSONObject.NULL)
+        r.update?.let { o.put("update", JSONObject().put("versionCode", it.versionCode).put("versionName", it.versionName)) }
         return o.toString()
     }
 
@@ -182,6 +191,7 @@ object ReceiptJson {
         val entries = o.optJSONArray("entries")?.let { a ->
             (0 until a.length()).map { val e = a.getJSONObject(it); EntryReceipt(e.getString("id"), e.optInt("row", 0), e.optString("status", "added")) }
         } ?: emptyList()
-        return SyncReceipt(entries, strings("categories"), strings("plans"), strings("closings"), o.optJSONObject("state")?.toString())
+        val update = o.optJSONObject("update")?.let { UpdateOffer(it.optLong("versionCode", 0), it.optString("versionName", "")) }?.takeIf { it.versionCode > 0 }
+        return SyncReceipt(entries, strings("categories"), strings("plans"), strings("closings"), o.optJSONObject("state")?.toString(), update)
     }
 }

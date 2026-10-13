@@ -33,6 +33,7 @@ object LaptopSync {
         return BudgetSnapshot(
             device = Build.MODEL ?: "phone",
             appVersion = Updater.installedVersion(context).second,
+            appVersionCode = Updater.installedVersion(context).first,
             generatedAt = System.currentTimeMillis(),
             today = LocalDate.now().toEpochDay(),
             entries = all.map {

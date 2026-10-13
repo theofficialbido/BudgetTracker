@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.10
+
+### Added
+- **Updates pushed from the laptop:** the snapshot now reports the installed build (`appVersionCode`). When you press **Update phone** in ToDoDesk, the receipt of the next sync carries an `update` offer. The app then downloads the APK in the background and installs it through Android's package installer. On Android 12+ this needs no tap after the first update done this way; before that, the install dialog opens (or an "Update ready" notification, when the app is not on screen). Right after the update the app syncs, so the laptop sees the new version.
+- "Check for update" in Settings uses the same installer.
 
 ### Changed
 - **One helper for both apps:** the app now talks to the ToDoDesk helper (port 8765, routes under `/api/budget`, the same code as the ToDo app). The standalone `helper/` is retired; `start-helper.cmd` only points to ToDoDesk.

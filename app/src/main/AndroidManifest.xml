@@ -47,6 +47,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- Installer results for updates from the laptop. -->
+        <receiver
+            android:name=".data.SelfUpdateReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".widget.BudgetWidget"
             android:exported="false">
