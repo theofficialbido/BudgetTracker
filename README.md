@@ -1,5 +1,8 @@
 # Budget Tracker
 
+> **The laptop helper has moved into ToDoDesk.** One helper, one port (8765) and one code now serve both this app and the ToDo app. The `helper/` folder here is the retired standalone helper, kept for reference; run ToDoDesk instead. This app reaches it under `/api/budget`.
+
+
 An Android expense and income tracker that syncs through a small laptop helper into an Excel budget workbook (`Budget.xlsx`).
 
 ```

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **One helper for both apps:** the app now talks to the ToDoDesk helper (port 8765, routes under `/api/budget`, the same code as the ToDo app). The standalone `helper/` is retired; `start-helper.cmd` only points to ToDoDesk.
+
 ## 1.9
 
 ### Changed

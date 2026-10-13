@@ -132,7 +132,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
-                value = token, onValueChange = { token = it }, label = { Text("Pairing token") },
+                value = token, onValueChange = { token = it }, label = { Text("ToDoDesk code (same as in the ToDo app)") },
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             Button(onClick = { vm.saveConnection(host, token) }, enabled = !syncing) { Text("Save and test connection") }

@@ -90,7 +90,8 @@ class SyncException(val kind: Kind, message: String) : Exception(message) {
 
 /** Plain HTTP to the laptop helper on the home network. */
 class SyncClient(host: String, token: String, private val connectMs: Int = 4000) {
-    private val base = "http://" + host.trim().removePrefix("http://").trimEnd('/')
+    /** Every route lives under /api/budget on the single ToDoDesk helper, which also serves the ToDo app. */
+    private val base = "http://" + host.trim().removePrefix("http://").trimEnd('/') + "/api/budget"
     private val token = token.uppercase().filter { it.isLetterOrDigit() }
 
     fun fetchState(): String = request("GET", "/state", null)
@@ -156,7 +157,7 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
      * Sends the whole snapshot in one request and returns the laptop's receipt (what it took, plus the workbook's state).
      * An older helper without this endpoint answers 404, which the caller treats as "send item by item instead".
      */
-    fun pushSnapshot(json: String): String = request("POST", "/api/sync", json)
+    fun pushSnapshot(json: String): String = request("POST", "/sync", json)
 
     /** Sends the month-end decisions. Returns the months the laptop has recorded. */
     fun pushClosings(items: List<MonthClosing>): Set<String> {
@@ -346,7 +347,7 @@ object Syncer {
                         }
                     } catch (e: SyncException) {
                         if (e.kind != SyncException.Kind.NOT_FOUND) throw e
-                        // an older helper without /api/sync: send item by item, as earlier versions of the app did
+                        // an older helper without /sync: send item by item, as earlier versions of the app did
                         val r = sendOneByOne(client, db, firstState)
                         state = r.first
                         fresh = r.second
