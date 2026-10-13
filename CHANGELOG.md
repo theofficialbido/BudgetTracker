@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.9
+
+### Changed
+- **The phone now syncs the way the ToDo app does:** one versioned snapshot in a single `POST /api/sync`, instead of a series of small requests. The snapshot is everything the phone knows (entries, categories, plans, month-end decisions, and its own numbers for this month). The laptop applies what is new, answers with a receipt of what it took (the phone marks exactly those as synced) and sends the workbook's current numbers back in the same response.
+- **Safer helper:** every request needs the pairing code (`Authorization: Bearer` or `X-Token`); only loopback, private, link-local and Tailscale addresses are answered; a wrong code is answered after 300 ms; bodies up to 16 MB (was 1 MB). New `GET /api/ping`.
+- **The laptop keeps a copy of the snapshot** (`%LOCALAPPDATA%\BudgetSync\snapshot.json`, written through a temp file) that does not depend on Excel, and rewrites a briefing after every sync (`briefs\budget.md` for reading, `briefs\budget.json` for programs) with the phone's own left-to-spend, per-category status, latest entries and month-end decisions.
+- **Sync can be switched off** (Settings, "Sync with the laptop"). The app works fully without it.
+
+### Added
+- **`contract` module** shared by the app and the helper (`SyncModels.kt`: snapshot, receipt, JSON, `VERSION`), with round-trip tests, so the two sides cannot drift apart.
+- The earlier endpoints (`/state`, `/expenses`, `/categories`, `/plans`, `/closings`, `/entries`, `/app`) still work, so older app versions and ToDoDesk are unaffected. A new app talking to an older helper falls back to them automatically.
+
+## 1.8
+
+### Fixed
+- **"Laptop not reachable" on the phone's own hotspot.** Automatic discovery (mDNS) is unreliable over a phone's hotspot, and the address remembered from home is no use there. When mDNS finds nothing, the app now looks for the helper's port on the phone's own Wi-Fi / hotspot / tethering network (its /24 only, private addresses only, never the mobile-data interface) and connects to whatever answers with the right pairing token. The order is: last working address, mDNS, that scan, then the manual address.
+
 ## 1.7
 
 ### Changed

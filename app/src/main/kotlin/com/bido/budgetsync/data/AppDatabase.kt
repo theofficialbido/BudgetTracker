@@ -31,6 +31,10 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE id = :id")
     suspend fun get(id: String): Expense?
 
+    /** Everything the phone has recorded, for the snapshot copy kept on the laptop. */
+    @Query("SELECT * FROM expenses ORDER BY createdAt")
+    suspend fun allNow(): List<Expense>
+
     /** Entries the cached data does not contain yet, once (the widget and alerts have no flow to watch). */
     @Query("SELECT * FROM expenses WHERE inCache = 0")
     suspend fun notInCacheNow(): List<Expense>

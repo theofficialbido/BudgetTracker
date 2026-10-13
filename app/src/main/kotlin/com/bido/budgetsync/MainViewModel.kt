@@ -366,6 +366,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         sync()
     }
 
+    private val _syncEnabled = MutableStateFlow(prefs.syncEnabled)
+    val syncEnabled = _syncEnabled.asStateFlow()
+
+    fun setSyncEnabled(on: Boolean) {
+        prefs.syncEnabled = on
+        _syncEnabled.value = on
+        sync()   // switching it on syncs at once; switching it off just records the status
+    }
+
     fun setAutoDiscover(on: Boolean) {
         prefs.autoDiscover = on
         _autoDiscover.value = on

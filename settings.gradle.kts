@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "BudgetSync"
-include(":helper", ":app")
+include(":contract", ":helper", ":app")

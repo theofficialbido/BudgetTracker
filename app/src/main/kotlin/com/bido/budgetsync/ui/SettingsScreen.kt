@@ -80,6 +80,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
     val update by vm.update.collectAsState()
     val checking by vm.checkingUpdate.collectAsState()
+    val syncEnabled by vm.syncEnabled.collectAsState()
     val autoDiscover by vm.autoDiscover.collectAsState()
     val smsEnabled by vm.smsEnabled.collectAsState()
     val senders by vm.senders.collectAsState()
@@ -105,6 +106,16 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Laptop", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Sync with the laptop")
+                    Text(
+                        "Everything works on the phone without it. Syncing keeps a copy on the laptop and feeds your morning and evening briefs.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = syncEnabled, onCheckedChange = { vm.setSyncEnabled(it) })
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Find the laptop automatically")

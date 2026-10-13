@@ -10,6 +10,14 @@ class Prefs(context: Context) {
         get() = sp.getString("host", DEFAULT_HOST) ?: DEFAULT_HOST
         set(v) = sp.edit().putString("host", v.trim()).apply()
 
+    /**
+     * Whether to sync with the laptop at all. The app works fully either way; syncing keeps a copy on the laptop and
+     * feeds the morning and evening briefs.
+     */
+    var syncEnabled: Boolean
+        get() = sp.getBoolean("syncEnabled", true)
+        set(v) = sp.edit().putBoolean("syncEnabled", v).apply()
+
     /** Look for the laptop on the current network instead of relying on one saved address. */
     var autoDiscover: Boolean
         get() = sp.getBoolean("autoDiscover", true)

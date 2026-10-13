@@ -1,6 +1,8 @@
 package com.bido.budgetsync.data
 
 import android.content.Context
+import com.bido.budgetsync.sync.ReceiptJson
+import com.bido.budgetsync.sync.SnapshotJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -83,7 +85,7 @@ data class ServerState(
 }
 
 class SyncException(val kind: Kind, message: String) : Exception(message) {
-    enum class Kind { UNREACHABLE, BUSY, AUTH, FULL, OTHER }
+    enum class Kind { UNREACHABLE, BUSY, AUTH, FULL, NOT_FOUND, OTHER }
 }
 
 /** Plain HTTP to the laptop helper on the home network. */
@@ -150,6 +152,12 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
         }
     }
 
+    /**
+     * Sends the whole snapshot in one request and returns the laptop's receipt (what it took, plus the workbook's state).
+     * An older helper without this endpoint answers 404, which the caller treats as "send item by item instead".
+     */
+    fun pushSnapshot(json: String): String = request("POST", "/api/sync", json)
+
     /** Sends the month-end decisions. Returns the months the laptop has recorded. */
     fun pushClosings(items: List<MonthClosing>): Set<String> {
         val body = JSONArray().apply {
@@ -186,7 +194,8 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
             conn.requestMethod = method
             conn.connectTimeout = connectMs
             conn.readTimeout = 15000
-            conn.setRequestProperty("X-Token", token)
+            conn.setRequestProperty("X-Token", token)                       // what earlier helpers and ToDoDesk read
+            conn.setRequestProperty("Authorization", "Bearer $token")       // the ToDo-style header
             if (body != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -201,6 +210,8 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
                 503 -> throw SyncException(SyncException.Kind.BUSY, "Budget.xlsx is busy (Excel or OneDrive), will retry")
                 409 -> throw SyncException(SyncException.Kind.OTHER, "That entry changed in Excel. Pull down to refresh, then try again.")
                 507 -> throw SyncException(SyncException.Kind.FULL, "The Log sheet is full (1000 rows)")
+                404 -> throw SyncException(SyncException.Kind.NOT_FOUND, "Laptop answered 404")
+                413 -> throw SyncException(SyncException.Kind.OTHER, "The laptop refused the data as too large")
                 else -> throw SyncException(SyncException.Kind.OTHER, "Laptop answered $code")
             }
         } catch (e: IOException) {
@@ -238,8 +249,19 @@ object Syncer {
                 if (e.kind == SyncException.Kind.UNREACHABLE) null else throw e
             }
         }
-        val found = (if (prefs.autoDiscover) attempt(prefs.lastHost) ?: attempt(Discovery.find(context)) else null)
-            ?: attempt(prefs.host)
+        var found: Triple<SyncClient, String, String>? = null
+        if (prefs.autoDiscover) {
+            found = attempt(prefs.lastHost) ?: attempt(Discovery.find(context))
+            if (found == null) {
+                // mDNS is silent on many hotspots; look for the helper's port on the phone's own network instead
+                val port = prefs.host.substringAfterLast(':', "8765").toIntOrNull() ?: 8765
+                for (candidate in Discovery.sweep(port)) {
+                    found = attempt(candidate)
+                    if (found != null) break
+                }
+            }
+        }
+        found = found ?: attempt(prefs.host)
         unreachableAt = if (found == null) System.currentTimeMillis() else 0L
         return found
     }
@@ -253,16 +275,55 @@ object Syncer {
         return mutex.withLock {
             withContext(Dispatchers.IO) {
                 val prefs = Prefs(context)
-                if (prefs.token.isBlank()) null else try { connect(context, prefs)?.first } catch (_: SyncException) { null }
+                if (!prefs.syncEnabled || prefs.token.isBlank()) null else try { connect(context, prefs)?.first } catch (_: SyncException) { null }
             }
         }
+    }
+
+    /**
+     * The earlier protocol: categories, month decisions, plans and entries as separate requests, then the state.
+     * Returns the newest state and whether it is fresh (false when the last request for it failed).
+     */
+    private suspend fun sendOneByOne(client: SyncClient, db: AppDatabase, firstState: String): Pair<String, Boolean> {
+        var state = firstState
+        var changed = false
+        val newCategories = db.customCategoryDao().unsynced()
+        if (newCategories.isNotEmpty()) {
+            db.customCategoryDao().markSynced(client.pushCategories(newCategories).toList())
+            changed = true
+        }
+        val closings = db.monthClosingDao().unsynced()
+        if (closings.isNotEmpty()) {
+            db.monthClosingDao().markSynced(client.pushClosings(closings).toList())
+            changed = true
+        }
+        val plans = db.planDao().unsynced()
+        if (plans.isNotEmpty()) {
+            db.planDao().markSynced(client.pushPlans(plans).toList())
+            changed = true
+        }
+        val queued = db.expenseDao().unsynced()
+        if (queued.isNotEmpty()) {
+            db.expenseDao().markSynced(client.push(queued).toList())
+            changed = true
+        }
+        var fresh = true
+        if (changed) {
+            try { state = client.fetchState() } catch (e: SyncException) {
+                if (e.kind != SyncException.Kind.UNREACHABLE && e.kind != SyncException.Kind.BUSY) throw e
+                fresh = false
+            }
+        }
+        return state to fresh
     }
 
     suspend fun run(context: Context): SyncOutcome = mutex.withLock {
         withContext(Dispatchers.IO) {
             val prefs = Prefs(context)
             val outcome = try {
-                if (prefs.token.isBlank() || (prefs.host.isBlank() && !prefs.autoDiscover)) {
+                if (!prefs.syncEnabled) {
+                    SyncOutcome(false, "Laptop sync is switched off. Everything still works on the phone.", false)
+                } else if (prefs.token.isBlank() || (prefs.host.isBlank() && !prefs.autoDiscover)) {
                     SyncOutcome(false, "Not paired yet: open Settings and enter the laptop token", false)
                 } else {
                     val (client, address, firstState) = connect(context, prefs)
@@ -270,37 +331,25 @@ object Syncer {
                     val db = AppDatabase.get(context)
                     val dao = db.expenseDao()
                     var state = firstState
-                    var changed = false
-                    // New categories first, so entries filed under them are recognised by the laptop.
-                    val newCategories = db.customCategoryDao().unsynced()
-                    if (newCategories.isNotEmpty()) {
-                        db.customCategoryDao().markSynced(client.pushCategories(newCategories).toList())
-                        changed = true
-                    }
-                    // Month-end decisions and plans set in the app are copied across for redundancy and for the briefs.
-                    val closings = db.monthClosingDao().unsynced()
-                    if (closings.isNotEmpty()) {
-                        db.monthClosingDao().markSynced(client.pushClosings(closings).toList())
-                        changed = true
-                    }
-                    val plans = db.planDao().unsynced()
-                    if (plans.isNotEmpty()) {
-                        db.planDao().markSynced(client.pushPlans(plans).toList())
-                        changed = true
-                    }
-                    val queued = dao.unsynced()
-                    if (queued.isNotEmpty()) {
-                        dao.markSynced(client.push(queued).toList())
-                        changed = true
-                    }
-                    // After sending, fetch fresh numbers. If that one request fails the sending still worked, so keep the
-                    // older state and do not mark entries as included in it: they stay counted from the phone.
                     var fresh = true
-                    if (changed) {
-                        try { state = client.fetchState() } catch (e: SyncException) {
-                            if (e.kind != SyncException.Kind.UNREACHABLE && e.kind != SyncException.Kind.BUSY) throw e
-                            fresh = false
+                    // One snapshot, one request: the laptop applies what is new and answers with a receipt and its numbers.
+                    val snapshot = LaptopSync.snapshot(context, runCatching { ServerState.fromJson(firstState) }.getOrNull())
+                    try {
+                        val receipt = ReceiptJson.decode(client.pushSnapshot(SnapshotJson.encode(snapshot)))
+                        LaptopSync.markTaken(db, receipt)
+                        val back = receipt.stateJson
+                        if (back != null) state = back else {
+                            try { state = client.fetchState() } catch (e: SyncException) {
+                                if (e.kind != SyncException.Kind.UNREACHABLE && e.kind != SyncException.Kind.BUSY) throw e
+                                fresh = false
+                            }
                         }
+                    } catch (e: SyncException) {
+                        if (e.kind != SyncException.Kind.NOT_FOUND) throw e
+                        // an older helper without /api/sync: send item by item, as earlier versions of the app did
+                        val r = sendOneByOne(client, db, firstState)
+                        state = r.first
+                        fresh = r.second
                     }
                     prefs.cachedState = state
                     if (fresh) dao.markInCache()   // the fresh state contains everything synced so far

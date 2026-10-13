@@ -7,6 +7,8 @@ kotlin { jvmToolchain(17) }
 
 dependencies {
     implementation(libs.poi.ooxml)
+    implementation(project(":contract"))
+    implementation(libs.json)
     implementation(libs.jackson)
     implementation(libs.jmdns)
     implementation(libs.slf4j.nop)

@@ -18,6 +18,21 @@ Phone app (Room DB, offline first)  --HTTP on home Wi-Fi-->  Laptop helper  --> 
 - Quick-add chips, a home-screen widget, launcher shortcuts, optional alerts and a 9pm reminder.
 - The helper keeps daily backups of the workbook outside OneDrive and serves app updates to the phone.
 
+## How the phone and the laptop talk
+
+Modelled on the ToDo app's laptop sync: the phone is the source of truth and pushes **one versioned snapshot** to the helper.
+
+```
+Phone (Budget Tracker)  --POST /api/sync, one JSON snapshot-->  Helper (Windows)  -->  Budget.xlsx
+                        <--receipt: what was taken + the workbook's numbers--       -->  snapshot.json, briefs\budget.md / .json
+```
+
+- **Auth:** the pairing code as `Authorization: Bearer <code>` (or `X-Token`), compared in constant time; a wrong code is answered after a delay.
+- **Reach:** only private, loopback, link-local and Tailscale callers are answered; bodies up to 16 MB. `GET /api/ping` checks the code.
+- **Idempotent:** the helper applies only what the snapshot marks as not synced, and its ledger remembers every id, so a retry never duplicates.
+- **Contract:** `contract/src/main/kotlin/com/bido/budgetsync/sync/SyncModels.kt`, used by both the app and the helper, with `BudgetSnapshot.VERSION` and `SnapshotJsonTest`. Change it there; raise `VERSION` for changes older readers cannot handle.
+- **For the briefs:** after every sync the helper rewrites `%LOCALAPPDATA%\BudgetSync\briefs\budget.md` (and `budget.json`) with the phone's own numbers.
+
 ## Build
 
 Needs JDK 17 and the Android SDK (platform 35). Set `sdk.dir` in `local.properties`.
