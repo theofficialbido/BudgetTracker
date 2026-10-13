@@ -173,7 +173,7 @@ class HelperServerTest {
 
     // ---- the older endpoints keep working ----------------------------------------------------------------------
 
-    @Test fun earlierEndpointsStillAnswerForOlderAppsAndToDoDesk() {
+    @Test fun earlierEndpointsStillAnswerForOlderAppsAndBaseCamp() {
         val base = start()
         assertEquals(200, send("$base/state", headers = mapOf("X-Token" to token)).statusCode())
         val post = send(

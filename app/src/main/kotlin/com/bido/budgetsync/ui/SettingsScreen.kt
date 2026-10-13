@@ -130,7 +130,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                             singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
                         )
                         OutlinedTextField(
-                            value = token, onValueChange = { token = it }, label = { Text("ToDoDesk code (same as in the ToDo app)") },
+                            value = token, onValueChange = { token = it }, label = { Text("BaseCamp code (same as in the ToDo app)") },
                             singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
                         )
                         Button(onClick = { vm.saveConnection(host, token) }, enabled = !syncing, modifier = Modifier.fillMaxWidth()) {

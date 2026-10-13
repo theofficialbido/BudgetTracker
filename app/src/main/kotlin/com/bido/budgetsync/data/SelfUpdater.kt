@@ -26,7 +26,7 @@ import java.io.File
 import java.io.IOException
 
 /**
- * Installs the new build the laptop offers in its answer to a sync ("Update phone" in ToDoDesk). The APK has the same
+ * Installs the new build the laptop offers in its answer to a sync ("Update phone" in BaseCamp). The APK has the same
  * package name, signing key and a higher versionCode, so Android installs it over this app and keeps all its data.
  *
  * On Android 12+ an app may update itself without asking once it is its own installer of record, which it becomes

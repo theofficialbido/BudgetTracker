@@ -90,7 +90,7 @@ class SyncException(val kind: Kind, message: String) : Exception(message) {
 
 /** Plain HTTP to the laptop helper on the home network. */
 class SyncClient(host: String, token: String, private val connectMs: Int = 4000) {
-    /** Every route lives under /api/budget on the single ToDoDesk helper, which also serves the ToDo app. */
+    /** Every route lives under /api/budget on the single BaseCamp helper, which also serves the ToDo app. */
     private val base = "http://" + host.trim().removePrefix("http://").trimEnd('/') + "/api/budget"
     private val token = token.uppercase().filter { it.isLetterOrDigit() }
 
@@ -195,7 +195,7 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
             conn.requestMethod = method
             conn.connectTimeout = connectMs
             conn.readTimeout = 15000
-            conn.setRequestProperty("X-Token", token)                       // what earlier helpers and ToDoDesk read
+            conn.setRequestProperty("X-Token", token)                       // what earlier helpers and BaseCamp read
             conn.setRequestProperty("Authorization", "Bearer $token")       // the ToDo-style header
             if (body != null) {
                 conn.doOutput = true

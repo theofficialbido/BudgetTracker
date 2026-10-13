@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- The laptop app ToDoDesk is now called **BaseCamp**. Settings asks for the "BaseCamp code". The address, port and code are the same, so nothing needs to be entered again.
+
 ## 1.11
 
 ### Changed

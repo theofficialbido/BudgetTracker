@@ -21,7 +21,7 @@ import java.util.concurrent.Executors
  *
  * Modelled on the ToDo app's laptop sync: the phone sends one versioned snapshot to POST /api/sync with the pairing code
  * as a bearer token, and the server is only reachable from private networks. The older per-item endpoints (/state,
- * /expenses, /categories, /plans, /closings, /entries, /app) are kept, so earlier app versions and ToDoDesk keep working.
+ * /expenses, /categories, /plans, /closings, /entries, /app) are kept, so earlier app versions and BaseCamp keep working.
  *
  *  - every request needs the pairing code, as `Authorization: Bearer <code>` or `X-Token: <code>`
  *  - only loopback / private / link-local / carrier-grade-NAT (Tailscale) callers are answered
@@ -71,7 +71,7 @@ class HelperServer(
             }
         }
 
-        // ---- per-item endpoints, kept for earlier app versions and for ToDoDesk ------------------------------
+        // ---- per-item endpoints, kept for earlier app versions and for BaseCamp ------------------------------
         s.createContext("/state") { ex ->
             guarded(ex) { if (ex.requestMethod != "GET") reply(ex, 405, mapOf("error" to "GET only")) else reply(ex, 200, book.readState()) }
         }
