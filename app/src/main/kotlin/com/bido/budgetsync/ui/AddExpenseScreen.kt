@@ -5,15 +5,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -22,16 +29,14 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,17 +45,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.bido.budgetsync.MainViewModel
 import com.bido.budgetsync.data.Amounts
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -75,30 +86,50 @@ fun AddExpenseScreen(
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(if (income) "Add income" else "Add expense") },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-        )
-    }) { pad ->
+    Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
         Column(
-            Modifier.padding(pad).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding(),
         ) {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf(false to "Expense", true to "Income").forEachIndexed { i, (isIncome, label) ->
-                    SegmentedButton(
-                        selected = income == isIncome,
-                        onClick = { income = isIncome },
-                        shape = SegmentedButtonDefaults.itemShape(i, 2),
-                    ) { Text(label) }
+            GradientHeader(
+                title = if (income) "Add income" else "Add expense",
+                subtitle = if (income) "Money coming in" else "Money going out",
+                onBack = onBack,
+            ) {
+                // A live preview of what is about to be saved.
+                Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        (if (income) "+" else "") + (value?.let { moneyPrecise(it) } ?: "0"),
+                        color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold,
+                    )
+                    Text(" EGP", color = Color.White.copy(alpha = 0.85f), fontSize = 16.sp, modifier = Modifier.padding(bottom = 6.dp))
                 }
+                Text(
+                    listOf(effectiveCategory, dayLabel(date)).joinToString("  ·  "),
+                    color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp,
+                )
             }
-
-            val templates by (if (income) vm.incomeTemplates else vm.expenseTemplates).collectAsState()
-            if (templates.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Your usual ones", style = MaterialTheme.typography.labelLarge)
+    
+            Column(
+                Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf(false to "Expense", true to "Income").forEachIndexed { i, (isIncome, label) ->
+                        SegmentedButton(
+                            selected = income == isIncome,
+                            onClick = { income = isIncome },
+                            shape = SegmentedButtonDefaults.itemShape(i, 2),
+                        ) { Text(label) }
+                    }
+                }
+    
+                val templates by (if (income) vm.incomeTemplates else vm.expenseTemplates).collectAsState()
+                if (templates.isNotEmpty()) {
+                    Text("Your usual ones", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         templates.forEach { t ->
                             AssistChip(
@@ -108,68 +139,75 @@ fun AddExpenseScreen(
                                     if (!income) category = t.category
                                 },
                                 label = { Text(t.label) },
+                                leadingIcon = { Icon(categoryIcon(t.category), null, Modifier.size(18.dp), tint = categoryColor(t.category)) },
+                                shape = CircleShape,
                             )
                         }
                     }
                 }
-            }
-
-            OutlinedTextField(
-                value = amount, onValueChange = { amount = Amounts.clean(it) },
-                label = { Text("Amount") }, prefix = { Text("EGP ") },
-                textStyle = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold, color = accent),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,
-                modifier = Modifier.fillMaxWidth().focusRequester(focus),
-            )
-
-            AnimatedVisibility(!income) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Category", style = MaterialTheme.typography.labelLarge)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        categories.forEach { c ->
-                            FilterChip(
-                                selected = c == category, onClick = { category = c }, label = { Text(c) },
-                                leadingIcon = { Icon(categoryIcon(c), null, Modifier.size(18.dp)) },
-                            )
-                        }
-                        AssistChip(
-                            onClick = { addingCategory = true },
-                            label = { Text("New category") },
-                            leadingIcon = { Icon(Icons.Default.Add, null, Modifier.size(18.dp)) },
-                        )
-                    }
-                }
-            }
-
-            OutlinedTextField(
-                value = description, onValueChange = { description = it },
-                label = { Text(if (income) "Source (e.g. salary, freelance)" else "Description") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-            )
-            if (suggestions.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    suggestions.forEach { s -> AssistChip(onClick = { description = s }, label = { Text(s) }) }
-                }
-            }
-
-            Text("Date", style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val today = LocalDate.now()
-                FilterChip(selected = date == today, onClick = { date = today }, label = { Text("Today") })
-                FilterChip(selected = date == today.minusDays(1), onClick = { date = today.minusDays(1) }, label = { Text("Yesterday") })
-                FilterChip(
-                    selected = date != today && date != today.minusDays(1),
-                    onClick = { picking = true },
-                    label = { Text(if (date != today && date != today.minusDays(1)) date.toString() else "Pick date") },
+    
+                OutlinedTextField(
+                    value = amount, onValueChange = { amount = Amounts.clean(it) },
+                    label = { Text("Amount") }, prefix = { Text("EGP ") },
+                    textStyle = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold, color = accent),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 )
+    
+                AnimatedVisibility(!income) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Category", style = MaterialTheme.typography.titleSmall)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            categories.forEach { c ->
+                                FilterChip(
+                                    selected = c == category, onClick = { category = c }, label = { Text(c) },
+                                    leadingIcon = { Icon(categoryIcon(c), null, Modifier.size(18.dp), tint = categoryColor(c)) },
+                                )
+                            }
+                            AssistChip(
+                                onClick = { addingCategory = true },
+                                label = { Text("New category") },
+                                leadingIcon = { Icon(Icons.Default.Add, null, Modifier.size(18.dp)) },
+                            )
+                        }
+                    }
+                }
+    
+                OutlinedTextField(
+                    value = description, onValueChange = { description = it },
+                    label = { Text(if (income) "Source (e.g. salary, freelance)" else "Description") },
+                    singleLine = true, shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (suggestions.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        suggestions.forEach { s -> AssistChip(onClick = { description = s }, label = { Text(s) }, shape = CircleShape) }
+                    }
+                }
+    
+                Text("Date", style = MaterialTheme.typography.titleSmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val today = LocalDate.now()
+                    FilterChip(selected = date == today, onClick = { date = today }, label = { Text("Today") })
+                    FilterChip(selected = date == today.minusDays(1), onClick = { date = today.minusDays(1) }, label = { Text("Yesterday") })
+                    val custom = date != today && date != today.minusDays(1)
+                    FilterChip(
+                        selected = custom,
+                        onClick = { picking = true },
+                        leadingIcon = { Icon(Icons.Default.CalendarMonth, null, Modifier.size(18.dp)) },
+                        label = { Text(if (custom) date.format(DateTimeFormatter.ofPattern("EEE, d MMM yyyy", Locale.ENGLISH)) else "Pick date") },
+                    )
+                }
+    
+                Button(
+                    onClick = { onSave(value!!, effectiveCategory, description.trim(), date) },
+                    enabled = value != null && value > 0,
+                    colors = if (income) ButtonDefaults.buttonColors(containerColor = accent, contentColor = MaterialTheme.colorScheme.surface) else ButtonDefaults.buttonColors(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp).height(52.dp),
+                ) { Text(if (income) "Save income" else "Save expense") }
             }
-
-            Button(
-                onClick = { onSave(value!!, effectiveCategory, description.trim(), date) },
-                enabled = value != null && value > 0,
-                colors = if (income) ButtonDefaults.buttonColors(containerColor = accent, contentColor = MaterialTheme.colorScheme.surface) else ButtonDefaults.buttonColors(),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
-            ) { Text(if (income) "Save income" else "Save expense") }
         }
     }
 
@@ -194,3 +232,5 @@ fun AddExpenseScreen(
         ) { DatePicker(state = pickerState) }
     }
 }
+
+private fun dayLabel(d: LocalDate): String = dateLabel(d.toString())

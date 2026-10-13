@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.11
+
+### Changed
+- **New look, in the same family as the ToDo app:** every screen now opens with a gradient banner (emerald into petrol, so it never looks like ToDo's indigo and teal), soft translucent tiles for the key figures, rounded white cards, section titles and empty states. Home's banner holds Left to spend, the month's progress and Received / Spent / Planned; History, the category screen and Settings put their own figures and the month switcher in it.
+- Fixed colours instead of the phone's wallpaper colours (light and dark), and edge-to-edge drawing under the status bar.
+- Each category keeps its own colour on every screen (icon badge, tag, chips); income stays green. Statuses show as coloured pills.
+- Editing an entry opens a bottom sheet instead of a dialog. Bank messages to review, updates and the month-end decision show as tinted notice cards.
+- The home-screen widget uses the same gradient.
+
+Nothing was removed: every screen, action, setting and shortcut works as before.
+
 ## 1.10
 
 ### Added

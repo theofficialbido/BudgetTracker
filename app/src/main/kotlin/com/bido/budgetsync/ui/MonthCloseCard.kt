@@ -7,11 +7,11 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EventRepeat
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -37,14 +37,14 @@ private fun YearMonthName(m: java.time.YearMonth) = m.month.getDisplayName(TextS
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun MonthCloseCard(p: PendingClose, onDecide: (reset: Boolean, invested: Double, splurged: Double) -> Unit) {
+fun MonthCloseCard(p: PendingClose, onDecide: (reset: Boolean, invested: Double, splurged: Double) -> Unit, modifier: Modifier = Modifier) {
     var choosing by remember(p.month) { mutableStateOf(false) }
     val name = YearMonthName(p.month)
     val next = YearMonthName(p.month.plusMonths(1))
     val left = p.balance > 0
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    NoticeCard(Icons.Default.EventRepeat, if (left) incomeColor() else statusColor("OVER"), modifier) {
+        Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
                 if (left) "$name ended with ${money(p.balance)} EGP left" else "$name ended ${money(-p.balance)} EGP over",
                 fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium,
@@ -52,9 +52,9 @@ fun MonthCloseCard(p: PendingClose, onDecide: (reset: Boolean, invested: Double,
             Text(
                 if (left) "Carry it into $next, or put it to use and start $next at 0?"
                 else "Carry the shortfall into $next, or start $next fresh at 0?",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Button(onClick = { onDecide(false, 0.0, 0.0) }) { Text(if (left) "Carry it over" else "Carry the shortfall") }
                 OutlinedButton(onClick = { if (left) choosing = true else onDecide(true, 0.0, 0.0) }) {
                     Text(if (left) "Invest or treat myself" else "Start at 0")

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.BudgetSync" parent="@android:style/Theme.DeviceDefault.NoActionBar" />
+    <style name="Theme.BudgetSync" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FFF4F7F5</item>
+    </style>
 </resources>

@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
@@ -95,123 +98,133 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
     LaunchedEffect(smsEnabled) { if (smsEnabled) vm.refreshSenders() }
 
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text("Settings") },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-        )
-    }) { pad ->
+    val installed = remember { Updater.installedVersion(ctx) }
+
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { pad ->
         Column(
-            Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),
+            Modifier
+                .padding(bottom = pad.calculateBottomPadding())
+                .verticalScroll(rememberScrollState())
+                .imePadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Laptop", style = MaterialTheme.typography.titleMedium)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Sync with the laptop")
-                    Text(
-                        "Everything works on the phone without it. Syncing keeps a copy on the laptop and feeds your morning and evening briefs.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = syncEnabled, onCheckedChange = { vm.setSyncEnabled(it) })
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Find the laptop automatically")
-                    Text(
-                        "Looks for the helper on whatever Wi-Fi you're on, so a new network or IP address doesn't stop syncing. Works when phone and laptop share a network that allows it.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = autoDiscover, onCheckedChange = { vm.setAutoDiscover(it) })
-            }
-            OutlinedTextField(
-                value = host, onValueChange = { host = it },
-                label = { Text(if (autoDiscover) "Backup address (name or IP, with port)" else "Address (name or IP, with port)") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = token, onValueChange = { token = it }, label = { Text("ToDoDesk code (same as in the ToDo app)") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-            )
-            Button(onClick = { vm.saveConnection(host, token) }, enabled = !syncing) { Text("Save and test connection") }
-            if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
+            GradientHeader(title = "Settings", subtitle = "Budget ${installed.second}", onBack = onBack)
 
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("App updates", style = MaterialTheme.typography.titleMedium)
-            val installed = remember { Updater.installedVersion(ctx) }
-            Text(
-                "Installed: ${installed.second} (build ${installed.first}). Updates come from your laptop and install over this app, so your settings, token, queued entries and categories are kept.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            when (val u = update) {
-                is UpdateCheck.Available -> Text("Update available: ${u.info.versionName} (build ${u.info.versionCode})", fontWeight = FontWeight.Bold)
-                is UpdateCheck.UpToDate -> Text("You have the latest version.")
-                is UpdateCheck.Failed -> Text(u.message, color = MaterialTheme.colorScheme.error)
-                null -> {}
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { vm.checkForUpdate() }, enabled = !checking) { Text(if (checking) "Working…" else "Check for update") }
-                if (update is UpdateCheck.Available) {
-                    Button(
-                        onClick = { if (canInstall) vm.installUpdate() else Updater.openInstallPermissionSettings(ctx) },
-                        enabled = !checking,
-                    ) { Text(if (canInstall) "Download and install" else "Allow installs, then tap again") }
+            Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SectionTitle("Laptop")
+                AppCard {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SwitchRow(
+                            "Sync with the laptop",
+                            "Everything works on the phone without it. Syncing keeps a copy on the laptop and feeds your morning and evening briefs.",
+                            syncEnabled,
+                        ) { vm.setSyncEnabled(it) }
+                        SwitchRow(
+                            "Find the laptop automatically",
+                            "Looks for the helper on whatever Wi-Fi you're on, so a new network or IP address doesn't stop syncing. Works when phone and laptop share a network that allows it.",
+                            autoDiscover,
+                        ) { vm.setAutoDiscover(it) }
+                        OutlinedTextField(
+                            value = host, onValueChange = { host = it },
+                            label = { Text(if (autoDiscover) "Backup address (name or IP, with port)" else "Address (name or IP, with port)") },
+                            singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = token, onValueChange = { token = it }, label = { Text("ToDoDesk code (same as in the ToDo app)") },
+                            singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+                        )
+                        Button(onClick = { vm.saveConnection(host, token) }, enabled = !syncing, modifier = Modifier.fillMaxWidth()) {
+                            Text("Save and test connection")
+                        }
+                        if (status.isNotBlank()) Text(status, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-            }
 
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("Alerts and reminders", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Worked out on the phone, so they work without the laptop.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Tell me when a category reaches WATCH or OVER", Modifier.weight(1f))
-                Switch(checked = alertsCategory, onCheckedChange = { toggleAlert("category", it) })
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Remind me at 9pm to log the day's expenses")
-                    Text(
-                        "Every evening, with what you've logged so far. Tapping it opens Add expense.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                SectionTitle("App updates")
+                AppCard {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Installed: ${installed.second} (build ${installed.first})", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Updates come from your laptop and install over this app, so your settings, token, queued entries and categories are kept.",
+                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        when (val u = update) {
+                            is UpdateCheck.Available -> Pill("Update available: ${u.info.versionName} (build ${u.info.versionCode})", MaterialTheme.colorScheme.primary)
+                            is UpdateCheck.UpToDate -> Pill("You have the latest version", incomeColor())
+                            is UpdateCheck.Failed -> Text(u.message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                            null -> {}
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { vm.checkForUpdate() }, enabled = !checking) { Text(if (checking) "Working…" else "Check for update") }
+                            if (update is UpdateCheck.Available) {
+                                Button(
+                                    onClick = { if (canInstall) vm.installUpdate() else Updater.openInstallPermissionSettings(ctx) },
+                                    enabled = !checking,
+                                ) { Text(if (canInstall) "Download and install" else "Allow installs, then tap again") }
+                            }
+                        }
+                    }
                 }
-                Switch(checked = alertsReminder, onCheckedChange = { toggleAlert("reminder", it) })
-            }
 
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("Bank SMS detection", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Off by default. Messages from the senders you tick are read on this phone only; nothing from them is sent anywhere. " +
-                    "Detected amounts wait in To review until you confirm them.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Detect spending SMS", Modifier.weight(1f))
-                Switch(checked = smsEnabled, onCheckedChange = { on ->
-                    if (!on) vm.setSmsEnabled(false)
-                    else if (SmsInboxScanner.hasPermission(ctx)) vm.setSmsEnabled(true)
-                    else permission.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS))
-                })
-            }
-            if (smsEnabled) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Tick your bank's sender", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                    TextButton(onClick = { vm.refreshSenders() }) { Text("Refresh") }
+                SectionTitle("Alerts and reminders")
+                AppCard {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            "Worked out on the phone, so they work without the laptop.",
+                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SwitchRow("Tell me when a category reaches WATCH or OVER", null, alertsCategory) { toggleAlert("category", it) }
+                        SwitchRow(
+                            "Remind me at 9pm to log the day's expenses",
+                            "Every evening, with what you've logged so far. Tapping it opens Add expense.",
+                            alertsReminder,
+                        ) { toggleAlert("reminder", it) }
+                    }
                 }
-                val shown = (found + senders.filter { s -> found.none { SmsInboxScanner.sameSender(it, s) } }).take(60)
-                if (shown.isEmpty()) Text("No senders found in the inbox yet.")
-                shown.forEach { s ->
-                    val on = senders.any { SmsInboxScanner.sameSender(it, s) }
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Checkbox(checked = on, onCheckedChange = { vm.toggleSender(s, it) })
-                        Text(s)
+
+                SectionTitle("Bank SMS detection")
+                AppCard {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SwitchRow(
+                            "Detect spending SMS",
+                            "Off by default. Messages from the senders you tick are read on this phone only; nothing from them is sent anywhere. " +
+                                "Detected amounts wait in To review until you confirm them.",
+                            smsEnabled,
+                        ) { on ->
+                            if (!on) vm.setSmsEnabled(false)
+                            else if (SmsInboxScanner.hasPermission(ctx)) vm.setSmsEnabled(true)
+                            else permission.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS))
+                        }
+                        if (smsEnabled) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Tick your bank's sender", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                                TextButton(onClick = { vm.refreshSenders() }) { Text("Refresh") }
+                            }
+                            val shown = (found + senders.filter { s -> found.none { SmsInboxScanner.sameSender(it, s) } }).take(60)
+                            if (shown.isEmpty()) Text("No senders found in the inbox yet.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            shown.forEach { s ->
+                                val on = senders.any { SmsInboxScanner.sameSender(it, s) }
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    Checkbox(checked = on, onCheckedChange = { vm.toggleSender(s, it) })
+                                    Text(s)
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/** A setting with a title, an optional explanation, and a switch on the right. */
+@Composable
+private fun SwitchRow(title: String, explanation: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            explanation?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        Switch(checked = checked, onCheckedChange = onChange, modifier = Modifier.padding(start = 12.dp))
     }
 }

@@ -93,8 +93,7 @@ fun statusColor(status: String): Color {
 }
 
 @Composable
-fun accentFor(category: String): Color =
-    if (category == MainViewModel.INCOME) incomeColor() else MaterialTheme.colorScheme.primary
+fun accentFor(category: String): Color = categoryColor(category)
 
 fun categoryIcon(category: String): ImageVector = when (category) {
     MainViewModel.INCOME -> Icons.Default.Payments

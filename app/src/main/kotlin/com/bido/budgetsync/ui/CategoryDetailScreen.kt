@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,13 +44,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.bido.budgetsync.MainViewModel
 import com.bido.budgetsync.data.Calc
 import com.bido.budgetsync.data.Entry
 import java.time.LocalDate
 import java.time.YearMonth
+
+private val Side = Modifier.padding(horizontal = 16.dp)
 
 /** What one expense group (same description) added up to inside a category. */
 private data class Group(val label: String, val entries: List<Entry>) {
@@ -87,97 +94,84 @@ fun CategoryDetailScreen(vm: MainViewModel, category: String, categories: List<S
     }
     val expanded = remember { mutableStateOf(setOf<String>()) }
 
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(category) },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-        )
-    }) { pad ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { pad ->
         LazyColumn(
-            Modifier.padding(pad),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+            Modifier.padding(bottom = pad.calculateBottomPadding()),
+            contentPadding = PaddingValues(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item(key = "month") {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    IconButton(onClick = { monthText = month.minusMonths(1).toString() }) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous month")
-                    }
-                    Text(monthLabel(month), style = MaterialTheme.typography.titleMedium)
-                    IconButton(onClick = { monthText = month.plusMonths(1).toString() }, enabled = month < YearMonth.now()) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next month")
-                    }
-                }
-            }
-
             item(key = "header") {
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                    Column(Modifier.padding(20.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconBadge(category)
-                            Spacer(Modifier.size(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(if (isIncome) "Received" else "Spent", style = MaterialTheme.typography.labelLarge)
-                                Text(
-                                    money(total) + " EGP", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
-                                    color = if (isIncome) incomeColor() else MaterialTheme.colorScheme.onPrimaryContainer,
-                                )
-                            }
-                            if (line != null) {
-                                Text(line.status, color = statusColor(line.status), fontWeight = FontWeight.Bold)
-                            }
+                GradientHeader(title = category, subtitle = if (isIncome) "Income" else "Category", onBack = onBack) {
+                    // Month switcher, white on the banner.
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 12.dp).background(Color.White.copy(alpha = 0.16f), RoundedCornerShape(50)),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        IconButton(onClick = { monthText = month.minusMonths(1).toString() }) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous month", tint = Color.White)
                         }
+                        Text(monthLabel(month), color = Color.White, fontWeight = FontWeight.SemiBold)
+                        IconButton(onClick = { monthText = month.plusMonths(1).toString() }, enabled = month < YearMonth.now()) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next month",
+                                tint = Color.White.copy(alpha = if (month < YearMonth.now()) 1f else 0.35f),
+                            )
+                        }
+                    }
+
+                    Text(if (isIncome) "Received" else "Spent", color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp))
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(money(total), color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f, fill = false))
+                        Text(" EGP", color = Color.White.copy(alpha = 0.85f), fontSize = 16.sp, modifier = Modifier.padding(bottom = 6.dp))
+                        Spacer(Modifier.weight(1f))
                         if (line != null) {
-                            val frac = if (line.planned <= 0) (if (line.actual > 0) 1f else 0f) else (line.actual / line.planned).toFloat().coerceIn(0f, 1f)
-                            val anim by animateFloatAsState(frac, tween(600), label = "detail")
-                            LinearProgressIndicator(
-                                progress = { anim },
-                                modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(10.dp).clip(RoundedCornerShape(5.dp)),
-                                color = statusColor(line.status),
-                                trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                            )
-                            Text(
-                                "of ${money(line.planned)} EGP planned" + if (line.planned > 0) " (${(line.percent * 100).toInt()}%)" else "",
-                                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp),
-                            )
+                            Pill(line.status, onBannerStatus(line.status), Modifier.padding(bottom = 8.dp))
                         }
-                        if (items.isNotEmpty()) {
-                            Text(
-                                "${items.size} ${if (items.size == 1) "entry" else "entries"}, average ${moneyPrecise(total / items.size)} EGP",
-                                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
+                    }
+                    if (line != null) {
+                        val frac = if (line.planned <= 0) (if (line.actual > 0) 1f else 0f) else (line.actual / line.planned).toFloat().coerceIn(0f, 1f)
+                        val anim by animateFloatAsState(frac, tween(600), label = "detail")
+                        HeaderProgress(anim, onBannerStatus(line.status))
+                        Text(
+                            "of ${money(line.planned)} EGP planned" + if (line.planned > 0) " (${(line.percent * 100).toInt()}%)" else "",
+                            color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    if (items.isNotEmpty()) {
+                        Text(
+                            "${items.size} ${if (items.size == 1) "entry" else "entries"}, average ${moneyPrecise(total / items.size)} EGP",
+                            color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp),
+                        )
                     }
                 }
             }
 
             if (line != null) {
                 item(key = "plan") {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Monthly plan", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(if (line.planned > 0) "${money(line.planned)} EGP" else "Not set", fontWeight = FontWeight.Medium)
+                    AppCard(Side) {
+                        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Monthly plan", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (line.planned > 0) "${money(line.planned)} EGP" else "Not set", fontWeight = FontWeight.SemiBold)
+                            }
+                            androidx.compose.material3.TextButton(onClick = { changingPlan = true }) { Text("Change plan") }
                         }
-                        androidx.compose.material3.TextButton(onClick = { changingPlan = true }) { Text("Change plan") }
                     }
                 }
             }
 
             if (items.isEmpty()) {
                 item(key = "empty") {
-                    Text(
-                        "Nothing in $category in ${monthLabel(month)}.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    EmptyState(categoryIcon(category), "Nothing here", "Nothing in $category in ${monthLabel(month)}.")
                 }
             } else {
-                item(key = "where-title") { Text("Where it went", style = MaterialTheme.typography.titleMedium) }
+                item(key = "where-title") { SectionTitle("Where it went", Side) }
                 items(groups, key = { "g-${it.label}" }) { g ->
                     val open = g.label in expanded.value
                     val share = if (total <= 0) 0f else (g.total / total).toFloat().coerceIn(0f, 1f)
                     val animShare by animateFloatAsState(share, tween(600), label = "share")
-                    Card(
-                        Modifier.fillMaxWidth().clickable {
+                    AppCard(
+                        Side.clickable {
                             expanded.value = if (open) expanded.value - g.label else expanded.value + g.label
                         }.animateContentSize(),
                     ) {
@@ -187,16 +181,17 @@ fun CategoryDetailScreen(vm: MainViewModel, category: String, categories: List<S
                                     Text(g.label, fontWeight = FontWeight.Medium, maxLines = 1)
                                     Text(
                                         "${g.entries.size}× · ${(share * 100).toInt()}% of ${category.lowercase()}",
-                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                                 Text(moneyPrecise(g.total), fontWeight = FontWeight.SemiBold)
+                                Icon(
+                                    if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    if (open) "Collapse" else "Expand",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp),
+                                )
                             }
-                            LinearProgressIndicator(
-                                progress = { animShare },
-                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(6.dp).clip(RoundedCornerShape(3.dp)),
-                                color = accentFor(category),
-                            )
+                            CardProgress(animShare, accentFor(category), Modifier.padding(top = 10.dp))
                             AnimatedVisibility(open) {
                                 Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     g.entries.forEach { e ->
@@ -211,9 +206,9 @@ fun CategoryDetailScreen(vm: MainViewModel, category: String, categories: List<S
                     }
                 }
 
-                item(key = "all-title") { Text("All entries", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp)) }
+                item(key = "all-title") { SectionTitle("All entries", Side) }
                 items(items, key = { "e-${it.key}" }) { e ->
-                    EntryRow(e) { editing = e }
+                    EntryRow(e, Side) { editing = e }
                 }
             }
         }

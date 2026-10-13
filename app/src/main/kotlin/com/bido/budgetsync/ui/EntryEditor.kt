@@ -4,8 +4,27 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Button
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -66,51 +85,77 @@ fun EntryEditor(vm: MainViewModel, entry: Entry, categories: List<String>, onDis
         }
     }
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(if (income) "Edit income" else "Edit expense") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = amount, onValueChange = { amount = Amounts.clean(it); error = null }, label = { Text("Amount (EGP)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { !busy }),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBadge(if (income) MainViewModel.INCOME else category)
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    if (income) "Edit income" else "Edit expense",
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 )
-                OutlinedTextField(
-                    value = description, onValueChange = { description = it }, label = { Text(if (income) "Source" else "Description") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth(),
-                )
-                if (!income) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        categories.forEach { c ->
-                            FilterChip(
-                                selected = c.equals(category, true), onClick = { category = c }, label = { Text(c) },
-                                leadingIcon = { Icon(categoryIcon(c), null, Modifier.size(18.dp)) },
-                            )
-                        }
+            }
+            OutlinedTextField(
+                value = amount, onValueChange = { amount = Amounts.clean(it); error = null }, label = { Text("Amount (EGP)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,
+                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = description, onValueChange = { description = it }, label = { Text(if (income) "Source" else "Description") },
+                singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+            )
+            if (!income) {
+                Text("Category", style = MaterialTheme.typography.titleSmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    categories.forEach { c ->
+                        FilterChip(
+                            selected = c.equals(category, true), onClick = { category = c }, label = { Text(c) },
+                            leadingIcon = { Icon(categoryIcon(c), null, Modifier.size(18.dp), tint = categoryColor(c)) },
+                        )
                     }
                 }
-                OutlinedButton(onClick = { picking = true }, modifier = Modifier.fillMaxWidth()) { Text("Date: $date") }
-                if (entry.local == null) {
-                    Text(
-                        "This entry is already in Budget.xlsx. Changes are made there through your laptop.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                TextButton(onClick = { confirmDelete = true }, enabled = !busy) {
-                    Text("Delete this entry", color = MaterialTheme.colorScheme.error)
-                }
             }
-        },
-        confirmButton = {
-            TextButton(
+            Text("Date", style = MaterialTheme.typography.titleSmall)
+            FilterChip(
+                selected = true,
+                onClick = { picking = true },
+                leadingIcon = { Icon(Icons.Default.CalendarMonth, null, Modifier.size(18.dp)) },
+                label = { Text(date.format(DateTimeFormatter.ofPattern("EEE, d MMM yyyy", Locale.ENGLISH))) },
+            )
+            if (entry.local == null) {
+                Text(
+                    "This entry is already in Budget.xlsx. Changes are made there through your laptop.",
+                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Button(
                 onClick = { run { vm.saveEdit(entry, date, if (income) MainViewModel.INCOME else category, description.trim(), value!!) } },
                 enabled = value != null && value > 0 && !busy,
-            ) { Text(if (busy) "Saving…" else "Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") } },
-    )
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text(if (busy) "Saving…" else "Save changes") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = { confirmDelete = true }, enabled = !busy) {
+                    Icon(Icons.Default.Delete, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Delete this entry", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
 
     if (confirmDelete) {
         AlertDialog(
