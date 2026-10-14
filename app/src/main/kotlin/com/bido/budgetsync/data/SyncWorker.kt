@@ -23,18 +23,22 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 }
 
 object SyncScheduler {
-    private val wifi = Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build()
+    /**
+     * Any connection, not just unmetered Wi-Fi: a phone that hosts its own hotspot is on mobile data, and the laptop on its
+     * hotspot is only reachable then. Off the home network a try fails fast (it only looks at private addresses) and backs off.
+     */
+    private val online = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
-    /** Background flush whenever the phone is on Wi-Fi (also picks up new SMS from the inbox). */
+    /** Background flush whenever the phone is online (also picks up new SMS from the inbox). UPDATE moves older installs off the Wi-Fi-only rule. */
     fun ensurePeriodic(context: Context) {
-        val req = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES).setConstraints(wifi).build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork("sync-periodic", ExistingPeriodicWorkPolicy.KEEP, req)
+        val req = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES).setConstraints(online).build()
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork("sync-periodic", ExistingPeriodicWorkPolicy.UPDATE, req)
     }
 
     /** After a save: retry with backoff until the laptop is reachable. */
     fun enqueueNow(context: Context) {
         val req = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setConstraints(wifi)
+            .setConstraints(online)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork("sync-now", ExistingWorkPolicy.REPLACE, req)

@@ -92,7 +92,7 @@ class SyncException(val kind: Kind, message: String) : Exception(message) {
 class SyncClient(host: String, token: String, private val connectMs: Int = 4000) {
     /** Every route lives under /api/budget on the single BaseCamp helper, which also serves the ToDo app. */
     private val base = "http://" + host.trim().removePrefix("http://").trimEnd('/') + "/api/budget"
-    private val token = token.uppercase().filter { it.isLetterOrDigit() }
+    private val token = RequestSigner.normalize(token)
 
     fun fetchState(): String = request("GET", "/state", null)
 
@@ -135,14 +135,18 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
 
     /** Streams the published APK to [dest]. */
     fun downloadApk(dest: java.io.File) {
-        val conn = URL(base + "/app/apk").openConnection() as HttpURLConnection
+        val url = URL(base + "/app/apk")
+        val conn = url.openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = connectMs
             conn.readTimeout = 30000
-            conn.setRequestProperty("X-Token", token)
+            val nonce = sign(conn, "GET", url, null)
             when (val code = conn.responseCode) {
-                200 -> { dest.parentFile?.mkdirs(); conn.inputStream.use { input -> dest.outputStream().use { input.copyTo(it) } } }
-                401 -> throw SyncException(SyncException.Kind.AUTH, "Wrong pairing token")
+                200 -> {
+                    requireLaptop(conn, nonce)
+                    dest.parentFile?.mkdirs(); conn.inputStream.use { input -> dest.outputStream().use { input.copyTo(it) } }
+                }
+                401 -> throw authError(conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty())
                 404 -> throw SyncException(SyncException.Kind.OTHER, "No update published on the laptop yet")
                 else -> throw SyncException(SyncException.Kind.OTHER, "Laptop answered $code")
             }
@@ -168,12 +172,15 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
         return (0 until res.length()).map { res.getJSONObject(it).getString("name") }.toSet()
     }
 
-    /** Sends plans set in the app. Returns the names the laptop handled (updated, or a category it doesn't have yet is skipped). */
+    /**
+     * Sends plans set in the app. Returns the names the laptop wrote. A category it doesn't have yet, or a Tracker line whose
+     * plan is a formula it can't write to, stays waiting, so the phone never claims a plan is in Excel when it isn't.
+     */
     fun pushPlans(items: List<PlanOverride>): Set<String> {
         val body = JSONArray().apply { items.forEach { put(JSONObject().put("name", it.name).put("planned", it.planned)) } }.toString()
         val res = JSONObject(request("POST", "/plans", body)).getJSONArray("results")
         return (0 until res.length()).map { res.getJSONObject(it) }
-            .filter { it.getString("status") != "unknown" }.map { it.getString("name") }.toSet()
+            .filter { it.getString("status") == "updated" }.map { it.getString("name") }.toSet()
     }
 
     /** Sends categories created on the phone. Returns the names the laptop now has (added, or already there). */
@@ -185,9 +192,28 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
         return (0 until res.length()).map { res.getJSONObject(it).getString("name") }.toSet()
     }
 
+    /** Signs the request (the code itself is never sent) and returns the nonce the reply's proof must match. */
+    private fun sign(conn: HttpURLConnection, method: String, url: URL, body: ByteArray?): String {
+        val nonce = RequestSigner.newNonce()
+        RequestSigner.headers(token, method, url.file, body, nonce).forEach { (k, v) -> conn.setRequestProperty(k, v) }
+        return nonce
+    }
+
+    /** A reply without the right proof came from some other device on that address, not from BaseCamp. */
+    private fun requireLaptop(conn: HttpURLConnection, nonce: String) {
+        if (!RequestSigner.provesCode(conn.getHeaderField(RequestSigner.PROOF), token, nonce)) {
+            throw SyncException(SyncException.Kind.OTHER, "That address is not BaseCamp with this code")
+        }
+    }
+
+    private fun authError(text: String) =
+        if (text.contains("\"clock\"")) SyncException(SyncException.Kind.AUTH, "The phone's clock is off. Set it to automatic time, then try again.")
+        else SyncException(SyncException.Kind.AUTH, "Wrong pairing token")
+
     private fun request(method: String, path: String, body: String?): String {
+        val url = URL(base + path)
         val conn = try {
-            (URL(base + path).openConnection() as HttpURLConnection)
+            (url.openConnection() as HttpURLConnection)
         } catch (e: IOException) {
             throw SyncException(SyncException.Kind.UNREACHABLE, "Bad address")
         }
@@ -195,22 +221,26 @@ class SyncClient(host: String, token: String, private val connectMs: Int = 4000)
             conn.requestMethod = method
             conn.connectTimeout = connectMs
             conn.readTimeout = 15000
-            conn.setRequestProperty("X-Token", token)                       // what earlier helpers and BaseCamp read
-            conn.setRequestProperty("Authorization", "Bearer $token")       // the ToDo-style header
-            if (body != null) {
+            val bytes = body?.toByteArray(Charsets.UTF_8)
+            val nonce = sign(conn, method, url, bytes)
+            if (bytes != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                conn.outputStream.use { it.write(bytes) }
             }
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            if (code in 200..299) requireLaptop(conn, nonce)
             return when (code) {
                 in 200..299 -> text
-                401 -> throw SyncException(SyncException.Kind.AUTH, "Wrong pairing token")
+                401 -> throw authError(text)
                 503 -> throw SyncException(SyncException.Kind.BUSY, "Budget.xlsx is busy (Excel or OneDrive), will retry")
                 409 -> throw SyncException(SyncException.Kind.OTHER, "That entry changed in Excel. Pull down to refresh, then try again.")
-                507 -> throw SyncException(SyncException.Kind.FULL, "The Log sheet is full (1000 rows)")
+                507 -> throw SyncException(
+                    SyncException.Kind.FULL,
+                    runCatching { JSONObject(text).optString("detail") }.getOrNull()?.ifBlank { null } ?: "A sheet in Budget.xlsx is full",
+                )
                 404 -> throw SyncException(SyncException.Kind.NOT_FOUND, "Laptop answered 404")
                 413 -> throw SyncException(SyncException.Kind.OTHER, "The laptop refused the data as too large")
                 else -> throw SyncException(SyncException.Kind.OTHER, "Laptop answered $code")
