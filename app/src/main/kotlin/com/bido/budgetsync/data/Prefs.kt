@@ -62,7 +62,7 @@ class Prefs(context: Context) {
 
     /** Last status notified per month and category, so each step up (OK, WATCH, OVER) is announced once. Stored as lines "key=STATUS". */
     var alertState: Map<String, String>
-        get() = (sp.getString("alertState", "") ?: "").lines().mapNotNull { l -> l.split("=", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+        get() = (sp.getString("alertState", "") ?: "").lines().mapNotNull { l -> l.lastIndexOf('=').takeIf { it > 0 }?.let { i -> l.substring(0, i) to l.substring(i + 1) } }.toMap()
         set(v) = sp.edit().putString("alertState", v.entries.joinToString("\n") { "${it.key}=${it.value}" }).apply()
 
     var lastReminderDate: String

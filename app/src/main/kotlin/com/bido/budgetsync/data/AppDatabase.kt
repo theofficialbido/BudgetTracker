@@ -44,7 +44,7 @@ interface ExpenseDao {
     suspend fun editUnsynced(id: String, date: String, category: String, description: String, amount: Double): Int
 
     @Query("DELETE FROM expenses WHERE id = :id AND synced = 0")
-    suspend fun deleteUnsynced(id: String)
+    suspend fun deleteUnsynced(id: String): Int
 
     @Query("UPDATE expenses SET synced = 1 WHERE id IN (:ids)")
     suspend fun markSynced(ids: List<String>)

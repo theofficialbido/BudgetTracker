@@ -108,7 +108,8 @@ object Calc {
         val phoneOnly = custom
             .filter { c -> (base + extras).none { it.first.equals(c.name, true) } }
             .map { it.name to planned(it.name, it.planned) }
-        val all = base + extras + phoneOnly
+        // Names are typed by hand in Excel, so one can repeat; a repeat would double-count and crash Home's list keys.
+        val all = (base + extras + phoneOnly).distinctBy { it.first.trim().lowercase() }
         val customNames = (extras + phoneOnly).map { it.first }.toSet()
 
         val inMonth = entries.filter { it.date != null && YearMonth.from(it.date) == month }
@@ -123,11 +124,8 @@ object Calc {
         }
         val totalPlanned = lines.sumOf { it.planned }
         val totalActual = lines.sumOf { it.actual }
-        val totalStatus = when {
-            totalActual > totalPlanned -> "OVER"
-            totalActual >= watch * totalPlanned -> "WATCH"
-            else -> "OK"
-        }
+        // Same rule as each category, so a total exactly on plan agrees with its lines (and 0 of 0 is OK, not WATCH).
+        val totalStatus = status(totalPlanned, totalActual, watch, over)
         val total = CategorySummary("Total", totalPlanned, totalActual, ratio(totalActual, totalPlanned), totalStatus)
         val income = inMonth.filter { it.isIncome }.sumOf { it.amount }
         val carried = openingFor(entries, closings, month)

@@ -247,7 +247,8 @@ object Syncer {
                 val client = SyncClient(a, prefs.token, connectMs = 2500)
                 Triple(client, a, client.fetchState())
             } catch (e: SyncException) {
-                if (e.kind == SyncException.Kind.UNREACHABLE) null else throw e
+                // 404 and odd errors mean some other device holds that address (a stale last host, say): try the next one.
+                if (e.kind == SyncException.Kind.UNREACHABLE || e.kind == SyncException.Kind.NOT_FOUND || e.kind == SyncException.Kind.OTHER) null else throw e
             }
         }
         var found: Triple<SyncClient, String, String>? = null

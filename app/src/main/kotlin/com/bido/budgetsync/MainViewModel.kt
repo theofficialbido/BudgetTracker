@@ -245,7 +245,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val local = entry.local
         if (local != null) {
             if (local.synced) return "This entry is just being saved to the laptop. Try again in a moment."
-            db.expenseDao().editUnsynced(local.id, date.toString(), category, description, amount)
+            // 0 rows: a sync marked it sent in the meantime, so the edit did not land.
+            if (db.expenseDao().editUnsynced(local.id, date.toString(), category, description, amount) == 0) {
+                return "This entry was just saved to the laptop. Open it again to change it there."
+            }
             say("Saved")
             return null
         }
@@ -269,7 +272,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val local = entry.local
         if (local != null) {
             if (local.synced) return "This entry is just being saved to the laptop. Try again in a moment."
-            db.expenseDao().deleteUnsynced(local.id)
+            if (db.expenseDao().deleteUnsynced(local.id) == 0) {
+                return "This entry was just saved to the laptop. Open it again to delete it there."
+            }
             say("Deleted")
             return null
         }
