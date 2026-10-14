@@ -65,6 +65,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,6 +105,8 @@ fun HomeScreen(
     val syncing by vm.syncing.collectAsState()
     val lastSync by vm.lastSyncMs.collectAsState()
     val update by vm.update.collectAsState()
+    val reminderHour by vm.reminderHour.collectAsState()
+    val haptics = LocalHapticFeedback.current
 
     var filter by rememberSaveable { mutableStateOf<String?>(null) }
     var fabOpen by rememberSaveable { mutableStateOf(false) }
@@ -222,7 +226,7 @@ fun HomeScreen(
                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(templates.take(5)) { t ->
                                     AssistChip(
-                                        onClick = { vm.quickAdd(t) },
+                                        onClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); vm.quickAdd(t) },
                                         label = { Text(t.label) },
                                         leadingIcon = { Icon(categoryIcon(t.category), null, Modifier.size(18.dp), tint = categoryColor(t.category)) },
                                         shape = CircleShape,
@@ -298,8 +302,8 @@ fun HomeScreen(
     if (askNotifications) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { com.bido.budgetsync.data.Prefs(ctx).askedNotifications = true; askNotifications = false },
-            title = { Text("Remind you at 9pm?") },
-            text = { Text("Every evening at 9pm the app can remind you to log the day's expenses, so nothing gets forgotten. It needs permission to send notifications.") },
+            title = { Text("Remind you at ${hourLabel(reminderHour)}?") },
+            text = { Text("Every evening at ${hourLabel(reminderHour)} the app can remind you to log the day's expenses, so nothing gets forgotten. It needs permission to send notifications.") },
             confirmButton = {
                 TextButton(onClick = {
                     com.bido.budgetsync.data.Prefs(ctx).askedNotifications = true

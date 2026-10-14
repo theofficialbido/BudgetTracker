@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.12
+
+### Added
+- **Choose when the evening reminder comes** (6pm to 11pm, 9pm unless changed) in Settings, Alerts and reminders, and a **Send a test notification** button, as in the ToDo app.
+- A short vibration when a quick-add chip logs an entry, like ticking off a task in the ToDo app.
 
 ### Changed
 - The laptop app ToDoDesk is now called **BaseCamp**. Settings asks for the "BaseCamp code". The address, port and code are the same, so nothing needs to be entered again.

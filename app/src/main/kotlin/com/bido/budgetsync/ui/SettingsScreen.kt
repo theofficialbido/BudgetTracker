@@ -46,12 +46,16 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import com.bido.budgetsync.MainViewModel
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.FilterChip
+import com.bido.budgetsync.data.AlertRules
 import com.bido.budgetsync.data.Alerts
 import com.bido.budgetsync.data.UpdateCheck
 import com.bido.budgetsync.data.Updater
 import com.bido.budgetsync.sms.SmsInboxScanner
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val ctx = LocalContext.current
@@ -67,6 +71,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
     val alertsCategory by vm.alertsCategory.collectAsState()
     val alertsReminder by vm.alertsReminder.collectAsState()
+    val reminderHour by vm.reminderHour.collectAsState()
     var pendingAlert by remember { mutableStateOf<String?>(null) }
     fun applyAlert(which: String, on: Boolean) {
         if (which == "category") vm.setAlerts(category = on) else vm.setAlerts(reminder = on)
@@ -175,10 +180,22 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                         )
                         SwitchRow("Tell me when a category reaches WATCH or OVER", null, alertsCategory) { toggleAlert("category", it) }
                         SwitchRow(
-                            "Remind me at 9pm to log the day's expenses",
+                            "Remind me at ${hourLabel(reminderHour)} to log the day's expenses",
                             "Every evening, with what you've logged so far. Tapping it opens Add expense.",
                             alertsReminder,
                         ) { toggleAlert("reminder", it) }
+                        if (alertsReminder) {
+                            Text("Time", fontSize = 13.sp)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                AlertRules.REMINDER_HOURS.forEach { h ->
+                                    FilterChip(selected = reminderHour == h, onClick = { vm.setReminderHour(h) }, label = { Text(hourLabel(h)) })
+                                }
+                            }
+                            TextButton(onClick = {
+                                if (Alerts.hasPermission(ctx)) vm.sendTestReminder()
+                                else notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }) { Text("Send a test notification") }
+                        }
                     }
                 }
 
@@ -216,6 +233,9 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
         }
     }
 }
+
+/** 21 -> "9pm", 12 -> "12pm", 0 -> "12am". */
+fun hourLabel(hour: Int): String = "${if (hour % 12 == 0) 12 else hour % 12}${if (hour < 12) "am" else "pm"}"
 
 /** A setting with a title, an optional explanation, and a switch on the right. */
 @Composable

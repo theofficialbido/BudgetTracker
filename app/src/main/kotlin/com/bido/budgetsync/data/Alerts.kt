@@ -41,18 +41,22 @@ object AlertRules {
     fun nextState(previous: Map<String, String>, month: YearMonth, lines: List<CategorySummary>): Map<String, String> =
         previous.filterKeys { it.startsWith("$month|") } + lines.associate { "$month|${it.name}" to it.status }
 
+    /** The default reminder time; Settings can move it (see [Prefs.reminderHour]). */
     val REMINDER_TIME: LocalTime = LocalTime.of(21, 0)
+
+    /** The hours offered in Settings, as in the ToDo app's reminder. */
+    val REMINDER_HOURS = listOf(18, 19, 20, 21, 22, 23)
 
     /**
      * The evening reminder goes out every day, whatever has been logged: you may have entered some expenses but not all
-     * of them. It is sent once a day, from 9pm on (a missed alarm is caught by the periodic check until midnight).
+     * of them. It is sent once a day, from [time] on (a missed alarm is caught by the periodic check until midnight).
      */
-    fun shouldRemind(now: java.time.LocalDateTime, lastReminded: String): Boolean =
-        now.toLocalTime() >= REMINDER_TIME && lastReminded != now.toLocalDate().toString()
+    fun shouldRemind(now: java.time.LocalDateTime, lastReminded: String, time: LocalTime = REMINDER_TIME): Boolean =
+        now.toLocalTime() >= time && lastReminded != now.toLocalDate().toString()
 
-    /** The next 9pm: today's if it hasn't come yet, otherwise tomorrow's. Set 30 seconds late so it never fires early. */
-    fun nextReminder(now: java.time.LocalDateTime): java.time.LocalDateTime {
-        val today = now.toLocalDate().atTime(REMINDER_TIME).plusSeconds(30)
+    /** The next [time]: today's if it hasn't come yet, otherwise tomorrow's. Set 30 seconds late so it never fires early. */
+    fun nextReminder(now: java.time.LocalDateTime, time: LocalTime = REMINDER_TIME): java.time.LocalDateTime {
+        val today = now.toLocalDate().atTime(time).plusSeconds(30)
         return if (now.isBefore(today)) today else today.plusDays(1)
     }
 
@@ -94,7 +98,7 @@ object Alerts {
     /** Sets the alarm for the next 9pm. It runs even when the phone is idle, and is set again after each reminder and each reboot. */
     fun scheduleReminder(context: Context) {
         val alarms = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-        val at = AlertRules.nextReminder(java.time.LocalDateTime.now()).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val at = AlertRules.nextReminder(java.time.LocalDateTime.now(), reminderTime(context)).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, at, reminderIntent(context))
     }
 
@@ -130,13 +134,25 @@ object Alerts {
             }
             prefs.alertState = AlertRules.nextState(previous, month, summary.categories)
         }
-        if (notify && prefs.alertsReminder && AlertRules.shouldRemind(now, prefs.lastReminderDate)) {
-            val today: LocalDate = now.toLocalDate()
-            val todays = entries.filter { !it.isIncome && it.date == today }
-            prefs.lastReminderDate = today.toString()
-            val (title, text) = AlertRules.reminderText(todays.size, todays.sumOf { it.amount })
-            post(context, id = 9001, title = title, text = text, openAdd = true)
+        if (notify && prefs.alertsReminder && AlertRules.shouldRemind(now, prefs.lastReminderDate, reminderTime(context))) {
+            prefs.lastReminderDate = now.toLocalDate().toString()
+            postReminder(context, entries, now.toLocalDate())
         }
+    }
+
+    fun reminderTime(context: Context): LocalTime = LocalTime.of(Prefs(context).reminderHour.coerceIn(0, 23), 0)
+
+    private fun postReminder(context: Context, entries: List<Entry>, today: LocalDate) {
+        val todays = entries.filter { !it.isIncome && it.date == today }
+        val (title, text) = AlertRules.reminderText(todays.size, todays.sumOf { it.amount })
+        post(context, id = 9001, title = title, text = text, openAdd = true)
+    }
+
+    /** Sends the evening reminder now, as it would read tonight (the "Send a test notification" button). */
+    suspend fun sendTestReminder(context: Context) {
+        val state = Prefs(context).cachedState?.let { runCatching { ServerState.fromJson(it) }.getOrNull() }
+        val entries = Calc.entries(state, AppDatabase.get(context).expenseDao().notInCacheNow())
+        postReminder(context, entries, LocalDate.now())
     }
 
     private fun money(v: Double) = String.format(java.util.Locale.US, "%,.0f", v)

@@ -50,6 +50,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("alertsReminder", true)
         set(v) = sp.edit().putBoolean("alertsReminder", v).apply()
 
+    /** The hour of the evening reminder, 9pm unless changed in Settings. */
+    var reminderHour: Int
+        get() = sp.getInt("reminderHour", 21)
+        set(v) = sp.edit().putInt("reminderHour", v).apply()
+
     /** The one-time "allow notifications?" question has been shown. */
     var askedNotifications: Boolean
         get() = sp.getBoolean("askedNotifications", false)

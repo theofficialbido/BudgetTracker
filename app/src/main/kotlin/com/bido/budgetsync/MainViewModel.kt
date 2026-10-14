@@ -294,6 +294,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _alertsReminder = MutableStateFlow(prefs.alertsReminder)
     val alertsReminder = _alertsReminder.asStateFlow()
 
+    private val _reminderHour = MutableStateFlow(prefs.reminderHour)
+    val reminderHour = _reminderHour.asStateFlow()
+
+    fun setReminderHour(hour: Int) {
+        prefs.reminderHour = hour
+        _reminderHour.value = hour
+        Alerts.reschedule(getApplication())
+    }
+
+    fun sendTestReminder() {
+        viewModelScope.launch { runCatching { Alerts.sendTestReminder(getApplication()) } }
+    }
+
     fun setAlerts(category: Boolean? = null, reminder: Boolean? = null) {
         category?.let { prefs.alertsCategory = it; _alertsCategory.value = it }
         reminder?.let { prefs.alertsReminder = it; _alertsReminder.value = it }

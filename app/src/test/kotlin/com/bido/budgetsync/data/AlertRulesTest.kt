@@ -56,6 +56,14 @@ class AlertRulesTest {
         assertEquals(LocalDateTime.of(2026, 11, 1, 21, 0, 30), AlertRules.nextReminder(LocalDateTime.of(2026, 10, 31, 22, 0)))
     }
 
+    @Test fun theReminderFollowsTheChosenHour() {
+        val eight = java.time.LocalTime.of(20, 0)
+        assertTrue(AlertRules.shouldRemind(LocalDateTime.of(2026, 10, 6, 20, 5), "", eight))
+        assertFalse(AlertRules.shouldRemind(LocalDateTime.of(2026, 10, 6, 19, 59), "", eight))
+        assertEquals(LocalDateTime.of(2026, 10, 6, 20, 0, 30), AlertRules.nextReminder(LocalDateTime.of(2026, 10, 6, 8, 0), eight))
+        assertEquals(LocalDateTime.of(2026, 10, 7, 20, 0, 30), AlertRules.nextReminder(LocalDateTime.of(2026, 10, 6, 20, 30), eight))
+    }
+
     @Test fun reminderTextMentionsWhatIsAlreadyLogged() {
         val none = AlertRules.reminderText(0, 0.0)
         assertEquals("Log today's expenses", none.first)
